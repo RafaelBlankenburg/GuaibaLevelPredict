@@ -1,0 +1,14 @@
+
+venv/
+models/*.keras
+models/*.pkl
+data/*.tmp
+data/*.bak
+data/~*
+__pycache__/
+*.py[cod]
+*.so
+*.ipynb_checkpoints
+.vscode/
+*.log
+*.out
