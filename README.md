@@ -6,6 +6,7 @@ Versão do Python 10 foi utilizada.
 
 pip install pandas numpy scikit-learn joblib tensorflow
 pip install openmeteo-requests
+pip install matplotlib
 
 venv\Scripts\activate.bat     <- No cmd 
 

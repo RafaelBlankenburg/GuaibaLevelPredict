@@ -50,5 +50,5 @@ def coletar_dados_chuva(dias_historico, dias_previsao):
 
 def coletar_nivel_atual_rio():
     print("⚠️  Atenção: Usando valor fixo para o nível atual do rio. Implementar busca real.")
-    return 267 # Exemplo: 250 centimetros
+    return 269 # Exemplo: 250 centimetros
     
