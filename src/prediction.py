@@ -1,63 +1,68 @@
-# Arquivo: src/prediction.py
+# Arquivo: src/prediction.py (modificado)
 
 import numpy as np
 import pandas as pd
 import joblib
 import tensorflow as tf
-from src.data_collection import CIDADES # Importa a lista de cidades
 
 def prever_nivel_rio_sequencia(chuva_df, nivel_inicial_rio, num_dias_historico, num_dias_previsao, num_lags_modelo):
     """
-    Prevê o nível do rio de forma autorregressiva, construindo cada janela de
-    entrada manualmente para espelhar a lógica de treinamento.
+    Prevê o nível do rio de forma autorregressiva, usando o histórico 
+    completo de chuva E NÍVEL como entrada.
     """
-    print("\n🧠  Carregando modelo e scaler treinados...")
+    print("\n🧠 Carregando modelo e scalers (versão com histórico completo)...")
     model = tf.keras.models.load_model('models/lstm_model.keras')
-    scaler = joblib.load('models/scaler.pkl')
-    
-    colunas_chuva = [c[0] for c in CIDADES]
-    coluna_alvo = 'altura_rio_guaiba_m'
-    
-    # Inicia o histórico de previsões com o último nível conhecido
-    ultimo_nivel_conhecido = nivel_inicial_rio
-    previsoes_finais = []
-    
-    print("🔮  Iniciando previsão autorregressiva para os próximos dias...")
-    for i in range(num_dias_previsao):
-        # Passo 1: Preparar a janela de features de chuva
-        # Pega os últimos 'num_lags_modelo' dias de chuva disponíveis
-        offset_inicio = num_dias_historico + i - num_lags_modelo
-        offset_fim = num_dias_historico + i
-        janela_chuva = chuva_df.iloc[offset_inicio:offset_fim][colunas_chuva].values
-        
-        # Passo 2: Preparar a feature de nível do rio
-        # O modelo espera o nível do rio do dia anterior como uma feature constante em toda a janela.
-        nivel_rio_feature = np.full((num_lags_modelo, 1), ultimo_nivel_conhecido)
-        
-        # Passo 3: Combinar as features para espelhar os dados de treino
-        janela_combinada = np.concatenate((janela_chuva, nivel_rio_feature), axis=1)
+    scaler_chuva = joblib.load('models/scaler_chuva.pkl')
+    scaler_nivel = joblib.load('models/scaler_nivel.pkl')
 
-        # Passo 4: Padronizar os dados da janela
-        # O scaler espera um DataFrame com os nomes de coluna corretos
-        df_para_scaler = pd.DataFrame(janela_combinada, columns=colunas_chuva + [coluna_alvo])
-        janela_scaled = scaler.transform(df_para_scaler)
+    colunas_chuva = scaler_chuva.feature_names_in_.tolist()
+    coluna_alvo = scaler_nivel.feature_names_in_[0]
+
+    # ### ALTERADO: Lógica de construção do histórico inicial ###
+    # Precisamos de um histórico inicial para o nível do rio. 
+    # Como não temos o histórico real, vamos assumir que o rio estava estável
+    # no nível inicial nos últimos N dias. Esta é uma premissa que podemos refinar depois.
+    historico_chuva = chuva_df.iloc[num_dias_historico - num_lags_modelo : num_dias_historico]
+    historico_nivel = pd.DataFrame(
+        np.full((num_lags_modelo, 1), nivel_inicial_rio),
+        index=historico_chuva.index,
+        columns=[coluna_alvo]
+    )
+    
+    # Este DataFrame conterá a janela de dados que deslizará para o futuro
+    historico_completo = pd.concat([historico_chuva, historico_nivel], axis=1)
+
+    previsoes_finais = []
+    print("🔮 Iniciando previsão autorregressiva com histórico completo...")
+    
+    for i in range(num_dias_previsao):
+        # Passo 1: Padronizar a janela de entrada atual
+        chuva_scaled = scaler_chuva.transform(historico_completo[colunas_chuva])
+        nivel_scaled = scaler_nivel.transform(historico_completo[[coluna_alvo]])
         
-        # Passo 5: Fazer a previsão
-        # O shape precisa ser (1, num_lags, num_features) para o LSTM
+        janela_scaled = np.concatenate([chuva_scaled, nivel_scaled], axis=1)
+        
+        # Passo 2: Fazer a previsão
         janela_lstm_input = np.expand_dims(janela_scaled, axis=0)
         pred_scaled = model.predict(janela_lstm_input, verbose=0)[0][0]
         
-        # Passo 6: "Despadronizar" a previsão para obter o valor real em metros
-        # Criamos um array "dummy" com o shape esperado pelo scaler para a transformação inversa
-        dummy_array = np.zeros((1, len(colunas_chuva) + 1))
-        dummy_array[0, -1] = pred_scaled  # Coloca a previsão na última posição (do alvo)
-        pred_descaled = scaler.inverse_transform(dummy_array)[0][-1]
-        
-        # Passo 7: Guardar a previsão e atualizar o 'ultimo_nivel_conhecido' para a próxima iteração
+        # Passo 3: Despadronizar a previsão
+        pred_descaled = scaler_nivel.inverse_transform([[pred_scaled]])[0][0]
         previsoes_finais.append(pred_descaled)
-        ultimo_nivel_conhecido = pred_descaled
+        
+        # Passo 4: ATUALIZAR O HISTÓRICO PARA A PRÓXIMA PREVISÃO
+        # Pegamos os dados de chuva do próximo dia
+        proximo_passo_chuva = chuva_df.iloc[num_dias_historico + i]
+        
+        # Criamos uma nova linha com a chuva prevista e o nível previsto
+        nova_linha = pd.DataFrame([proximo_passo_chuva.values.tolist() + [pred_descaled]],
+                                  columns=colunas_chuva + [coluna_alvo],
+                                  index=[proximo_passo_chuva.name])
 
-    # Criar o dataframe final de resultados
+        # Adicionamos a nova linha e removemos a mais antiga para deslizar a janela
+        historico_completo = pd.concat([historico_completo, nova_linha])
+        historico_completo = historico_completo.iloc[1:]
+
     datas_previsao = chuva_df.index[num_dias_historico : num_dias_historico + num_dias_previsao]
     resultado_df = pd.DataFrame({'data': datas_previsao.strftime('%Y-%m-%d'), 'altura_prevista_m': previsoes_finais})
     

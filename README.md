@@ -7,7 +7,7 @@ Versão do Python 10 foi utilizada.
 pip install pandas numpy scikit-learn joblib tensorflow
 pip install openmeteo-requests
 
-venv\Scripts\activate.bat     <- No cmd
+venv\Scripts\activate.bat     <- No cmd 
 
 
 python src/train.py
