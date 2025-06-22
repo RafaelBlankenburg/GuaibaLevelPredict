@@ -4,9 +4,8 @@ Utilizando redes neurais (LSTM) para prever o nível do guaíba
 
 Versão do Python 10 foi utilizada.
 
-pip install pandas numpy scikit-learn joblib tensorflow
-pip install openmeteo-requests
-pip install matplotlib
+pip install -r requirements.txt
+
 
 venv\Scripts\activate.bat     <- No cmd 
 

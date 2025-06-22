@@ -1,5 +1,3 @@
-# Arquivo: src/train.py (modificado para prever DELTA)
-
 import pandas as pd
 import numpy as np
 import joblib
@@ -26,35 +24,27 @@ def train_model():
     tf.random.set_seed(RANDOM_SEED)
 
     df = pd.read_csv(ARQUIVO_CSV)
-    df.dropna(inplace=True) # Garante que não há NaNs
+    df.dropna(inplace=True) 
 
     COLUNA_NIVEL_ABSOLUTO = 'altura_rio_guaiba_m'
-    
-    # ### NOVO: CRIANDO A COLUNA ALVO 'DELTA' ###
-    # Nosso novo alvo é a diferença do nível de um dia para o outro.
+
     COLUNA_ALVO_DELTA = 'delta_nivel'
     df[COLUNA_ALVO_DELTA] = df[COLUNA_NIVEL_ABSOLUTO].diff()
-    
-    # O primeiro valor do delta será NaN, então removemos essa linha.
+
     df = df.dropna()
 
     features_chuva = [col for col in df.columns if col not in [COLUNA_NIVEL_ABSOLUTO, COLUNA_ALVO_DELTA]]
-    
-    # As features de entrada continuam sendo a chuva e o NÍVEL ABSOLUTO do rio
+
     FEATURES_ENTRADA = features_chuva + [COLUNA_NIVEL_ABSOLUTO]
-    
-    # Scalers: um para as features de entrada, e um NOVO para o nosso alvo (delta)
+
     scaler_entradas = StandardScaler()
     scaler_delta = StandardScaler()
 
-    # Treinamos os scalers
     df_scaled_entradas = pd.DataFrame(scaler_entradas.fit_transform(df[FEATURES_ENTRADA]), columns=FEATURES_ENTRADA, index=df.index)
     df_scaled_delta = pd.DataFrame(scaler_delta.fit_transform(df[[COLUNA_ALVO_DELTA]]), columns=[COLUNA_ALVO_DELTA], index=df.index)
 
-    # Juntamos tudo num dataframe padronizado para gerar as janelas
     df_scaled = pd.concat([df_scaled_entradas, df_scaled_delta], axis=1)
 
-    # Geramos as janelas. O alvo agora é a coluna de DELTA.
     X, y = gerar_janelas(df_scaled, NUM_LAGS, FEATURES_ENTRADA, COLUNA_ALVO_DELTA)
     
     print(f"✅ Janelas de dados geradas. Shape de X: {X.shape}, Shape de y: {y.shape}")
@@ -69,7 +59,7 @@ def train_model():
         tf.keras.layers.Dropout(0.2),
         tf.keras.layers.LSTM(32),
         tf.keras.layers.Dropout(0.2),
-        tf.keras.layers.Dense(1) # A saída é um único valor: o delta previsto
+        tf.keras.layers.Dense(1) 
     ])
 
     model.compile(optimizer='adam', loss='mse')

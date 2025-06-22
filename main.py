@@ -1,11 +1,9 @@
-# Arquivo: main.py
-
 import pandas as pd
 import numpy as np
-import os # Importa a biblioteca 'os'
+import os 
 from src.data_collection import coletar_dados_chuva, coletar_nivel_atual_rio
 from src.prediction import prever_nivel_rio_sequencia
-from src.visualization import gerar_grafico_previsao # ### NOVO: Importa a função de plotagem
+from src.visualization import gerar_grafico_previsao 
 
 # --- CONFIGURAÇÕES GERAIS DA EXECUÇÃO ---
 NUM_DIAS_HISTORICO = 14
@@ -13,7 +11,7 @@ NUM_LAGS_MODELO = 14
 NUM_DIAS_PREVISAO_CHUVA = 14
 DIAS_ADICIONAIS_ESTIMATIVA = 7
 DIAS_TOTAIS_PREVISAO = NUM_DIAS_PREVISAO_CHUVA + DIAS_ADICIONAIS_ESTIMATIVA
-COTA_INUNDACAO = 3.0 # Nível em metros
+COTA_INUNDACAO = 300
 
 
 def run_prediction_scenarios():
@@ -23,9 +21,8 @@ def run_prediction_scenarios():
     """
     print("--- INICIANDO ROTINA DE PREVISÃO E ESTIMATIVA DO NÍVEL DO RIO ---")
     
-    os.makedirs('results', exist_ok=True) # ### NOVO: Cria a pasta 'results' se não existir
+    os.makedirs('results', exist_ok=True) 
 
-    # ... (o resto do código de coleta e previsão permanece o mesmo) ...
     df_chuva_base = coletar_dados_chuva(NUM_DIAS_HISTORICO, NUM_DIAS_PREVISAO_CHUVA)
     nivel_atual = coletar_nivel_atual_rio()
     
@@ -37,7 +34,7 @@ def run_prediction_scenarios():
         df_zeros = pd.DataFrame(0, index=datas_futuras, columns=df_chuva_cenario1.columns)
         df_chuva_cenario1 = pd.concat([df_chuva_cenario1, df_zeros])
 
-    # Esta é a previsão COM APENAS DADOS NUMÉRICOS, ideal para o gráfico
+
     previsao_total_numerica = prever_nivel_rio_sequencia(
         chuva_df=df_chuva_cenario1,
         nivel_inicial_rio=nivel_atual,

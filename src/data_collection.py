@@ -1,11 +1,9 @@
-# Arquivo: src/data_collection.py
-
 import pandas as pd
 import openmeteo_requests
 import requests_cache
 from retry_requests import retry
 
-# A lista de cidades é uma dependência da coleta de dados, então ela fica aqui.
+
 CIDADES = [
     ("vacaria_mm", -28.5122, -50.9339), ("guapore_mm", -28.8456, -51.8903),
     ("lagoa_vermelha_mm",-28.2086,-51.5258), ("passo_fundo_mm",-28.2628,-52.4067),
