@@ -3,7 +3,7 @@ Utilizando redes neurais (LSTM) para prever o nível do guaíba
 
 
 Versão do Python 10 foi utilizada.
-
+python -m pip install --upgrade scikit-learn
 pip install -r requirements.txt
 
 

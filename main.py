@@ -7,9 +7,9 @@ from src.visualization import gerar_grafico_previsao
 
 # --- CONFIGURAÇÕES GERAIS DA EXECUÇÃO ---
 NUM_DIAS_HISTORICO = 14
-NUM_LAGS_MODELO = 14
+NUM_LAGS_MODELO = 10
 NUM_DIAS_PREVISAO_CHUVA = 14
-DIAS_ADICIONAIS_ESTIMATIVA = 7
+DIAS_ADICIONAIS_ESTIMATIVA = 10
 DIAS_TOTAIS_PREVISAO = NUM_DIAS_PREVISAO_CHUVA + DIAS_ADICIONAIS_ESTIMATIVA
 COTA_INUNDACAO = 3
 
@@ -26,7 +26,7 @@ def run_prediction_scenarios():
     df_chuva_base = coletar_dados_chuva(NUM_DIAS_HISTORICO, NUM_DIAS_PREVISAO_CHUVA)
     nivel_atual = coletar_nivel_atual_rio()
     
-    print("\n---  сценарио 1: PREVISÃO COM ESTIAGEM (SEM CHUVA APÓS D14) ---")
+    print("\n---  Cenário 1: PREVISÃO COM ESTIAGEM (SEM CHUVA APÓS D14) ---")
     df_chuva_cenario1 = df_chuva_base.copy()
 
     if DIAS_ADICIONAIS_ESTIMATIVA > 0:
