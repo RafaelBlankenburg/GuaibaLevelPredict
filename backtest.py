@@ -17,7 +17,7 @@ from retry_requests import retry
 
 # --- 1. CONFIGURAÇÃO DO TESTE ---
 ARQUIVO_NIVEIS_REAIS_CSV = 'niveis_reais_diarios.csv'
-DATA_INICIO_PREVISAO = "2024-04-06"
+DATA_INICIO_PREVISAO = "2024-04-08"
 DATA_FIM_PREVISAO = "2024-05-06"
 NIVEL_INICIAL_REAL = 0.83 
 NUM_LAGS = 7
@@ -58,79 +58,61 @@ def fetch_rain_data(start_date_str, end_date_str):
     print(f"⏳ Buscando dados de chuva de {start_date_str} a {end_date_str}...")
     openmeteo = openmeteo_requests.Client(session = retry(requests_cache.CachedSession('.cache', expire_after=3600), retries=5, backoff_factor=0.2))
     url = "https://historical-forecast-api.open-meteo.com/v1/forecast"
-    
     dfs = []
-    
     for nome_cidade, (lat, lon) in CIDADES.items():
         params = {"latitude": lat, "longitude": lon, "start_date": start_date_str, "end_date": end_date_str, "daily": "rain_sum", "timezone": "America/Sao_Paulo"}
-        responses = openmeteo.weather_api(url, params=params)
-        response = responses[0]
-        daily = response.Daily()
-        rain_values = daily.Variables(0).ValuesAsNumpy()
-        df = pd.DataFrame(rain_values, columns=[nome_cidade])
-        dfs.append(df)
-    
-    # Concatena os valores de chuva de todas as cidades
+        try:
+            responses = openmeteo.weather_api(url, params=params)
+            response = responses[0]
+            daily = response.Daily()
+            rain_values = daily.Variables(0).ValuesAsNumpy()
+            df = pd.DataFrame(rain_values, columns=[nome_cidade])
+            dfs.append(df)
+        except Exception as e:
+            print(f"❌ Falha ao buscar dados para {nome_cidade}. Erro: {e}. Preenchendo com 0.")
+            num_dias = (pd.to_datetime(end_date_str) - pd.to_datetime(start_date_str)).days + 1
+            dfs.append(pd.DataFrame([0.0] * num_dias, columns=[nome_cidade]))
     chuva_df = pd.concat(dfs, axis=1)
-    
-    # Gera o índice de datas, garantindo que ele corresponde ao pedido
     all_dates = pd.date_range(start=start_date_str, end=end_date_str, freq='D')
     chuva_df.index = all_dates
-    
     print("✅ Dados de chuva coletados com sucesso.")
     return chuva_df
 
 def run_backtest():
-    # ... (O resto do seu script run_backtest() não precisa mudar)
-    # Copie e cole aqui a sua função run_backtest() da versão anterior.
-    # Ela já estava correta. A única falha era na função fetch_rain_data.
     print("--- INICIANDO BACKTESTING DO MODELO ---")
-    try:
-        model = tf.keras.models.load_model('models/lstm_model_delta.keras')
-        scaler_entradas = joblib.load('models/scaler_entradas.pkl')
-        scaler_delta = joblib.load('models/scaler_delta.pkl')
-        with open('models/training_columns.json', 'r') as f: config_colunas = json.load(f)
-        FEATURES_ENTRADA = config_colunas['features_entrada']
-    except FileNotFoundError as e:
-        print(f"ERRO: Não foi possível carregar os artefatos do modelo: {e}\nCertifique-se de que o modelo já foi treinado."); sys.exit(1)
-        
-    try:
-        df_niveis_reais = pd.read_csv(ARQUIVO_NIVEIS_REAIS_CSV, parse_dates=['data'], index_col='data')
-    except FileNotFoundError:
-        print(f"ERRO: Arquivo de níveis reais '{ARQUIVO_NIVEIS_REAIS_CSV}' não encontrado."); sys.exit(1)
-
-    df_niveis_reais = df_niveis_reais.loc[DATA_INICIO_PREVISAO:DATA_FIM_PREVISAO]
+    model = tf.keras.models.load_model('models/lstm_model_delta.keras')
+    scaler_entradas = joblib.load('models/scaler_entradas.pkl')
+    scaler_delta = joblib.load('models/scaler_delta.pkl')
+    with open('models/training_columns.json', 'r') as f: config_colunas = json.load(f)
+    FEATURES_ENTRADA = config_colunas['features_entrada']
+    COLUNA_NIVEL_ABSOLUTO = config_colunas['coluna_nivel_absoluto']
     
-    data_inicio_teste = df_niveis_reais.index[0]
-    data_fim_teste = df_niveis_reais.index[-1]
-    data_inicio_busca_chuva = data_inicio_teste - pd.Timedelta(days=NUM_LAGS)
+    data_inicio = pd.to_datetime(DATA_INICIO_PREVISAO)
+    data_fim = pd.to_datetime(DATA_FIM_PREVISAO)
+    data_inicio_hist_chuva = data_inicio - pd.Timedelta(days=NUM_LAGS)
     
-    df_chuva = fetch_rain_data(data_inicio_busca_chuva.strftime('%Y-%m-%d'), data_fim_teste.strftime('%Y-%m-%d'))
+    df_chuva_total = fetch_rain_data(data_inicio_hist_chuva.strftime('%Y-%m-%d'), data_fim.strftime('%Y-%m-%d'))
     
-    df_historico_completo = df_chuva.join(df_niveis_reais, how='left')
-    COLUNA_NIVEL_ABSOLUTO = 'altura_rio_guaiba_m'
+    # Prepara a janela de histórico inicial apenas com os dados brutos
+    data_ponto_partida = data_inicio - pd.Timedelta(days=1)
+    historico_janela = df_chuva_total.loc[:data_ponto_partida].copy()
+    historico_janela[COLUNA_NIVEL_ABSOLUTO] = NIVEL_INICIAL_REAL # Preenche o histórico com o nível inicial
     
-    df_historico_completo[COLUNA_NIVEL_ABSOLUTO].fillna(method='ffill', inplace=True)
-    df_historico_completo[COLUNA_NIVEL_ABSOLUTO].fillna(method='bfill', inplace=True)
-    df_historico_completo.fillna(0, inplace=True) 
-
-    print("🛠️  Criando features de engenharia para o período de teste...")
-    for cidade in CIDADES.keys():
-        df_historico_completo[f'delta_{cidade}'] = df_historico_completo[cidade].diff().fillna(0)
-        df_historico_completo[f'acum_{cidade}_3d'] = df_historico_completo[cidade].rolling(window=3).sum().fillna(0)
-    
-    data_ponto_partida = data_inicio_teste - pd.Timedelta(days=1)
-    if data_ponto_partida not in df_historico_completo.index:
-         print(f"ERRO: A data de partida ({data_ponto_partida.strftime('%Y-%m-%d')}) não foi encontrada após processamento."); sys.exit(1)
-
-    nivel_inicial_real = df_historico_completo.loc[data_ponto_partida][COLUNA_NIVEL_ABSOLUTO]
-    
-    historico_janela = df_historico_completo.loc[:data_ponto_partida].iloc[-NUM_LAGS:].copy()
     previsoes = []
-
     print("🔮 Simulando previsão dia a dia...")
-    for data_previsao in pd.date_range(start=data_inicio_teste, end=data_fim_teste):
-        janela_para_prever = historico_janela[FEATURES_ENTRADA]
+    for data_previsao in pd.date_range(start=data_inicio, end=data_fim):
+        # --- LÓGICA CORRIGIDA: ENGENHARIA DE FEATURES DENTRO DO LOOP ---
+        janela_com_eng = historico_janela.copy()
+        
+        # Recalcula as features de engenharia para a janela atual
+        cidades_chuva = list(CIDADES.keys())
+        for cidade in cidades_chuva:
+            janela_com_eng[f'delta_{cidade}'] = janela_com_eng[cidade].diff().fillna(0)
+            janela_com_eng[f'acum_{cidade}_3d'] = janela_com_eng[cidade].rolling(window=3).sum().fillna(0)
+        
+        janela_para_prever = janela_com_eng[FEATURES_ENTRADA]
+        # --- FIM DA CORREÇÃO ---
+
         janela_padronizada = scaler_entradas.transform(janela_para_prever)
         janela_lstm_input = np.expand_dims(janela_padronizada, axis=0)
         
@@ -141,14 +123,15 @@ def run_backtest():
         nivel_previsto = nivel_anterior + delta_previsto_real
         previsoes.append(nivel_previsto)
         
-        proxima_linha_base = df_historico_completo.loc[data_previsao].copy()
-        proxima_linha_base[COLUNA_NIVEL_ABSOLUTO] = nivel_previsto
-        
-        proxima_linha_df = pd.DataFrame([proxima_linha_base], index=[data_previsao])
+        # Atualiza a janela de histórico para a próxima iteração
+        proxima_linha_chuva = df_chuva_total.loc[data_previsao].copy()
+        proxima_linha_df = pd.DataFrame([proxima_linha_chuva], index=[data_previsao])
+        proxima_linha_df[COLUNA_NIVEL_ABSOLUTO] = nivel_previsto
         
         historico_janela = pd.concat([historico_janela.iloc[1:], proxima_linha_df])
 
-    df_resultado = df_niveis_reais.copy()
+    df_niveis_reais = pd.read_csv(ARQUIVO_NIVEIS_REAIS_CSV, parse_dates=['data'], index_col='data')
+    df_resultado = df_niveis_reais.loc[DATA_INICIO_PREVISAO:DATA_FIM_PREVISAO].copy()
     df_resultado['nivel_previsto'] = previsoes
     df_resultado.rename(columns={'altura_rio_guaiba_m': 'nivel_real'}, inplace=True)
     
