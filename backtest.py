@@ -93,26 +93,24 @@ def run_backtest():
     
     df_chuva_total = fetch_rain_data(data_inicio_hist_chuva.strftime('%Y-%m-%d'), data_fim.strftime('%Y-%m-%d'))
     
-    # Prepara a janela de histórico inicial apenas com os dados brutos
+    df_simulacao = df_chuva_total.copy()
+    df_simulacao[COLUNA_NIVEL_ABSOLUTO] = np.nan
     data_ponto_partida = data_inicio - pd.Timedelta(days=1)
-    historico_janela = df_chuva_total.loc[:data_ponto_partida].copy()
-    historico_janela[COLUNA_NIVEL_ABSOLUTO] = NIVEL_INICIAL_REAL # Preenche o histórico com o nível inicial
+    df_simulacao.loc[data_ponto_partida, COLUNA_NIVEL_ABSOLUTO] = NIVEL_INICIAL_REAL
+    df_simulacao[COLUNA_NIVEL_ABSOLUTO] = df_simulacao[COLUNA_NIVEL_ABSOLUTO].fillna(method='ffill')
+    df_simulacao.fillna(0, inplace=True)
+
+    print("🛠️  Criando features de engenharia para o período de teste...")
+    for cidade in CIDADES.keys():
+        df_simulacao[f'delta_{cidade}'] = df_simulacao[cidade].diff().fillna(0)
+        df_simulacao[f'acum_{cidade}_3d'] = df_simulacao[cidade].rolling(window=3).sum().fillna(0)
     
+    historico_janela = df_simulacao.loc[:data_ponto_partida].iloc[-NUM_LAGS:].copy()
     previsoes = []
+
     print("🔮 Simulando previsão dia a dia...")
     for data_previsao in pd.date_range(start=data_inicio, end=data_fim):
-        # --- LÓGICA CORRIGIDA: ENGENHARIA DE FEATURES DENTRO DO LOOP ---
-        janela_com_eng = historico_janela.copy()
-        
-        # Recalcula as features de engenharia para a janela atual
-        cidades_chuva = list(CIDADES.keys())
-        for cidade in cidades_chuva:
-            janela_com_eng[f'delta_{cidade}'] = janela_com_eng[cidade].diff().fillna(0)
-            janela_com_eng[f'acum_{cidade}_3d'] = janela_com_eng[cidade].rolling(window=3).sum().fillna(0)
-        
-        janela_para_prever = janela_com_eng[FEATURES_ENTRADA]
-        # --- FIM DA CORREÇÃO ---
-
+        janela_para_prever = historico_janela[FEATURES_ENTRADA]
         janela_padronizada = scaler_entradas.transform(janela_para_prever)
         janela_lstm_input = np.expand_dims(janela_padronizada, axis=0)
         
@@ -123,10 +121,10 @@ def run_backtest():
         nivel_previsto = nivel_anterior + delta_previsto_real
         previsoes.append(nivel_previsto)
         
-        # Atualiza a janela de histórico para a próxima iteração
-        proxima_linha_chuva = df_chuva_total.loc[data_previsao].copy()
-        proxima_linha_df = pd.DataFrame([proxima_linha_chuva], index=[data_previsao])
-        proxima_linha_df[COLUNA_NIVEL_ABSOLUTO] = nivel_previsto
+        proxima_linha_base = df_simulacao.loc[data_previsao].copy()
+        proxima_linha_base[COLUNA_NIVEL_ABSOLUTO] = nivel_previsto
+        proxima_linha_df = pd.DataFrame([proxima_linha_base])
+        proxima_linha_df.index = [data_previsao]
         
         historico_janela = pd.concat([historico_janela.iloc[1:], proxima_linha_df])
 
@@ -142,6 +140,15 @@ def run_backtest():
     print(f"Erro Médio Absoluto (MAE): {mae:.3f} metros (ou {(mae*100):.1f} cm em média)")
     print(f"Raiz do Erro Quadrático Médio (RMSE): {rmse:.3f} metros")
     print("------------------------------------------")
+
+    # --- ### NOVO: PRINT DOS RESULTADOS DIÁRIOS ### ---
+    print("\n--- COMPARAÇÃO DIA A DIA (REAL vs. PREVISTO) ---")
+    df_para_print = df_resultado.copy()
+    df_para_print['nivel_real'] = df_para_print['nivel_real'].round(2)
+    df_para_print['nivel_previsto'] = df_para_print['nivel_previsto'].round(2)
+    print(df_para_print.to_string())
+    print("-------------------------------------------------")
+    # --- FIM DO NOVO BLOCO ---
 
     plotar_comparacao(df_resultado)
 
