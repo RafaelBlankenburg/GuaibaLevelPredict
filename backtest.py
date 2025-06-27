@@ -1,29 +1,26 @@
-# Arquivo: backtest.py
+# backtest.py
 
 import pandas as pd
 import numpy as np
 import joblib
 import tensorflow as tf
-from sklearn.metrics import mean_absolute_error, root_mean_squared_error
+from sklearn.metrics import mean_absolute_error, mean_squared_error
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import os
-import sys
-import time
 import json
 import openmeteo_requests
 import requests_cache
 from retry_requests import retry
 
-# --- 1. CONFIGURAÇÃO DO TESTE ---
+# --- CONFIGURAÇÕES DO BACKTEST ---
 ARQUIVO_NIVEIS_REAIS_CSV = 'niveis_reais_diarios.csv'
 DATA_INICIO_PREVISAO = "2024-04-08"
 DATA_FIM_PREVISAO = "2024-05-06"
-NIVEL_INICIAL_REAL = 0.83 
+NIVEL_INICIAL_REAL = 0.83
 NUM_LAGS = 7
-
-# --- 2. CONSTANTES DO PROJETO ---
 COTA_INUNDACAO = 3.0
+
 CIDADES = {
     "vacaria_mm": (-28.5108, -50.9389), "guapore_mm": (-28.8489, -51.8903),
     "lagoa_vermelha_mm": (-28.2086, -51.5258), "passo_fundo_mm": (-28.2628, -52.4067),
@@ -37,118 +34,128 @@ CIDADES = {
     "cacapava_do_sul_mm": (-30.5128, -53.4911), "sao_gabriel_mm": (-30.3358, -54.3200)
 }
 
-def plotar_comparacao(df_resultado):
-    caminho_saida = f"results/backtest_{DATA_INICIO_PREVISAO}_a_{DATA_FIM_PREVISAO}.png"
-    print(f"📈 Gerando gráfico de comparação em {caminho_saida}...")
-    plt.style.use('seaborn-v0_8-whitegrid')
-    fig, ax = plt.subplots(figsize=(18, 9))
-    ax.plot(df_resultado.index, df_resultado['nivel_real'], 'o-', label='Nível Real', color='black', linewidth=2.5, zorder=5)
-    ax.plot(df_resultado.index, df_resultado['nivel_previsto'], 'o--', label='Previsão do Modelo', color='crimson', linewidth=2, zorder=5)
-    ax.axhline(y=COTA_INUNDACAO, color='darkblue', linestyle=':', label=f'Cota de Inundação ({COTA_INUNDACAO:.2f} m)')
-    ax.set_title(f"Backtest do Modelo: {df_resultado.index[0].strftime('%d/%m/%Y')} a {df_resultado.index[-1].strftime('%d/%m/%Y')}", fontsize=18, weight='bold')
-    ax.set_xlabel('Data', fontsize=12); ax.set_ylabel('Nível do Rio (metros)', fontsize=12)
-    ax.legend(fontsize=12); ax.grid(True, which='both', linestyle='--', linewidth=0.5)
-    ax.xaxis.set_major_locator(mdates.DayLocator(interval=3))
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m')); plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
-    fig.tight_layout()
-    os.makedirs('results', exist_ok=True); plt.savefig(caminho_saida, dpi=150); plt.close(fig)
-    print("✅ Gráfico de comparação salvo.")
-
 def fetch_rain_data(start_date_str, end_date_str):
     print(f"⏳ Buscando dados de chuva de {start_date_str} a {end_date_str}...")
-    openmeteo = openmeteo_requests.Client(session = retry(requests_cache.CachedSession('.cache', expire_after=3600), retries=5, backoff_factor=0.2))
+    openmeteo = openmeteo_requests.Client(session=retry(requests_cache.CachedSession('.cache', expire_after=3600), retries=5, backoff_factor=0.2))
     url = "https://historical-forecast-api.open-meteo.com/v1/forecast"
     dfs = []
+
     for nome_cidade, (lat, lon) in CIDADES.items():
-        params = {"latitude": lat, "longitude": lon, "start_date": start_date_str, "end_date": end_date_str, "daily": "rain_sum", "timezone": "America/Sao_Paulo"}
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "start_date": start_date_str,
+            "end_date": end_date_str,
+            "daily": "rain_sum",
+            "timezone": "America/Sao_Paulo"
+        }
         try:
             responses = openmeteo.weather_api(url, params=params)
             response = responses[0]
-            daily = response.Daily()
-            rain_values = daily.Variables(0).ValuesAsNumpy()
+            rain_values = response.Daily().Variables(0).ValuesAsNumpy()
             df = pd.DataFrame(rain_values, columns=[nome_cidade])
             dfs.append(df)
         except Exception as e:
-            print(f"❌ Falha ao buscar dados para {nome_cidade}. Erro: {e}. Preenchendo com 0.")
-            num_dias = (pd.to_datetime(end_date_str) - pd.to_datetime(start_date_str)).days + 1
-            dfs.append(pd.DataFrame([0.0] * num_dias, columns=[nome_cidade]))
+            print(f"❌ Falha ao buscar {nome_cidade}: {e}")
+            dias = (pd.to_datetime(end_date_str) - pd.to_datetime(start_date_str)).days + 1
+            dfs.append(pd.DataFrame([0.0] * dias, columns=[nome_cidade]))
+
     chuva_df = pd.concat(dfs, axis=1)
-    all_dates = pd.date_range(start=start_date_str, end=end_date_str, freq='D')
-    chuva_df.index = all_dates
-    print("✅ Dados de chuva coletados com sucesso.")
+    chuva_df.index = pd.date_range(start=start_date_str, end=end_date_str, freq='D')
+    print("✅ Dados de chuva coletados.")
     return chuva_df
 
+def plotar_comparacao(df_resultado):
+    os.makedirs('results', exist_ok=True)
+    caminho_saida = f"results/backtest_{DATA_INICIO_PREVISAO}_a_{DATA_FIM_PREVISAO}.png"
+    print(f"📈 Gerando gráfico de comparação em {caminho_saida}...")
+
+    plt.style.use('seaborn-v0_8-whitegrid')
+    fig, ax = plt.subplots(figsize=(18, 9))
+    ax.plot(df_resultado.index, df_resultado['nivel_real'], 'o-', label='Nível Real', color='black', linewidth=2.5)
+    ax.plot(df_resultado.index, df_resultado['nivel_previsto'], 'o--', label='Previsão do Modelo', color='crimson', linewidth=2)
+    ax.axhline(y=COTA_INUNDACAO, color='darkblue', linestyle=':', label=f'Cota de Inundação ({COTA_INUNDACAO:.2f} m)')
+    ax.set_title("Backtest do Modelo", fontsize=18, weight='bold')
+    ax.set_xlabel("Data", fontsize=12); ax.set_ylabel("Nível do Rio (m)", fontsize=12)
+    ax.legend(fontsize=12); ax.grid(True, linestyle='--', linewidth=0.5)
+    ax.xaxis.set_major_locator(mdates.DayLocator(interval=3))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m'))
+    plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+    plt.tight_layout(); plt.savefig(caminho_saida, dpi=150); plt.close()
+    print("✅ Gráfico salvo.")
+
 def run_backtest():
-    print("--- INICIANDO BACKTESTING DO MODELO ---")
+    print("\n--- INICIANDO BACKTEST ---")
+
     model = tf.keras.models.load_model('models/lstm_model_delta.keras')
     scaler_entradas = joblib.load('models/scaler_entradas.pkl')
     scaler_delta = joblib.load('models/scaler_delta.pkl')
-    with open('models/training_columns.json', 'r') as f: config_colunas = json.load(f)
+    with open('models/training_columns.json', 'r') as f:
+        config_colunas = json.load(f)
+
     FEATURES_ENTRADA = config_colunas['features_entrada']
     COLUNA_NIVEL_ABSOLUTO = config_colunas['coluna_nivel_absoluto']
-    
+
     data_inicio = pd.to_datetime(DATA_INICIO_PREVISAO)
     data_fim = pd.to_datetime(DATA_FIM_PREVISAO)
-    data_inicio_hist_chuva = data_inicio - pd.Timedelta(days=NUM_LAGS)
-    
-    df_chuva_total = fetch_rain_data(data_inicio_hist_chuva.strftime('%Y-%m-%d'), data_fim.strftime('%Y-%m-%d'))
-    
-    df_simulacao = df_chuva_total.copy()
-    df_simulacao[COLUNA_NIVEL_ABSOLUTO] = np.nan
-    data_ponto_partida = data_inicio - pd.Timedelta(days=1)
-    df_simulacao.loc[data_ponto_partida, COLUNA_NIVEL_ABSOLUTO] = NIVEL_INICIAL_REAL
-    df_simulacao[COLUNA_NIVEL_ABSOLUTO] = df_simulacao[COLUNA_NIVEL_ABSOLUTO].fillna(method='ffill')
-    df_simulacao.fillna(0, inplace=True)
+    data_inicio_hist = data_inicio - pd.Timedelta(days=NUM_LAGS)
 
-    print("🛠️  Criando features de engenharia para o período de teste...")
-    for cidade in CIDADES.keys():
-        df_simulacao[f'delta_{cidade}'] = df_simulacao[cidade].diff().fillna(0)
-        df_simulacao[f'acum_{cidade}_3d'] = df_simulacao[cidade].rolling(window=3).sum().fillna(0)
-    
-    historico_janela = df_simulacao.loc[:data_ponto_partida].iloc[-NUM_LAGS:].copy()
+    df_chuva = fetch_rain_data(data_inicio_hist.strftime('%Y-%m-%d'), data_fim.strftime('%Y-%m-%d'))
+    df_chuva[COLUNA_NIVEL_ABSOLUTO] = np.nan
+    df_chuva.loc[data_inicio - pd.Timedelta(days=1), COLUNA_NIVEL_ABSOLUTO] = NIVEL_INICIAL_REAL
+    df_chuva[COLUNA_NIVEL_ABSOLUTO] = df_chuva[COLUNA_NIVEL_ABSOLUTO].fillna(method='ffill')
+    df_chuva.fillna(0, inplace=True)
+
+    for cidade in CIDADES:
+        df_chuva[f'delta_{cidade}'] = df_chuva[cidade].diff().fillna(0)
+        df_chuva[f'acum_{cidade}_3d'] = df_chuva[cidade].rolling(window=3).sum().fillna(0)
+
+    historico_janela = df_chuva.loc[:data_inicio - pd.Timedelta(days=1)].iloc[-NUM_LAGS:].copy()
     previsoes = []
 
-    print("🔮 Simulando previsão dia a dia...")
+    print("🔮 Simulando previsão dia a dia com atualização dinâmica...")
     for data_previsao in pd.date_range(start=data_inicio, end=data_fim):
-        janela_para_prever = historico_janela[FEATURES_ENTRADA]
-        janela_padronizada = scaler_entradas.transform(janela_para_prever)
-        janela_lstm_input = np.expand_dims(janela_padronizada, axis=0)
+        X = historico_janela[FEATURES_ENTRADA]
+        X_scaled = scaler_entradas.transform(X)
+        X_input = np.expand_dims(X_scaled, axis=0)
         
-        delta_previsto_scaled = model.predict(janela_lstm_input, verbose=0)[0][0]
-        delta_previsto_real = scaler_delta.inverse_transform([[delta_previsto_scaled]])[0][0]
-        
-        nivel_anterior = historico_janela.iloc[-1][COLUNA_NIVEL_ABSOLUTO]
-        nivel_previsto = nivel_anterior + delta_previsto_real
-        previsoes.append(nivel_previsto)
-        
-        proxima_linha_base = df_simulacao.loc[data_previsao].copy()
-        proxima_linha_base[COLUNA_NIVEL_ABSOLUTO] = nivel_previsto
-        proxima_linha_df = pd.DataFrame([proxima_linha_base])
-        proxima_linha_df.index = [data_previsao]
-        
-        historico_janela = pd.concat([historico_janela.iloc[1:], proxima_linha_df])
+        delta_scaled = model.predict(X_input, verbose=0)[0][0]
+        delta_real = scaler_delta.inverse_transform([[delta_scaled]])[0][0]
 
-    df_niveis_reais = pd.read_csv(ARQUIVO_NIVEIS_REAIS_CSV, parse_dates=['data'], index_col='data')
-    df_resultado = df_niveis_reais.loc[DATA_INICIO_PREVISAO:DATA_FIM_PREVISAO].copy()
+        # Adiciona ruído com base em ±15% do valor previsto (ou 0.05m mínimo)
+        variabilidade = max(abs(delta_real) * 0.15, 0.05)
+        ruido = np.random.normal(0, variabilidade)
+        delta_real += ruido
+
+        nivel_previsto = historico_janela.iloc[-1][COLUNA_NIVEL_ABSOLUTO] + delta_real
+        previsoes.append(nivel_previsto)
+
+        nova_linha = df_chuva.loc[[data_previsao]].copy()
+        nova_linha[COLUNA_NIVEL_ABSOLUTO] = nivel_previsto
+        historico_janela = pd.concat([historico_janela.iloc[1:], nova_linha])
+        historico_janela = historico_janela[~historico_janela.index.duplicated(keep='last')]
+
+    # Comparação com os dados reais
+    df_reais = pd.read_csv(ARQUIVO_NIVEIS_REAIS_CSV, parse_dates=['data'], index_col='data')
+    df_resultado = df_reais.loc[DATA_INICIO_PREVISAO:DATA_FIM_PREVISAO].copy()
     df_resultado['nivel_previsto'] = previsoes
     df_resultado.rename(columns={'altura_rio_guaiba_m': 'nivel_real'}, inplace=True)
-    
+
+    # --- MÉTRICAS DE AVALIAÇÃO (compatíveis com sklearn antigo) ---
     mae = mean_absolute_error(df_resultado['nivel_real'], df_resultado['nivel_previsto'])
-    rmse = root_mean_squared_error(df_resultado['nivel_real'], df_resultado['nivel_previsto'])
+    rmse = mean_squared_error(df_resultado['nivel_real'], df_resultado['nivel_previsto']) ** 0.5
 
-    print("\n--- MÉTRICAS DE PERFORMANCE DO BACKTEST ---")
-    print(f"Erro Médio Absoluto (MAE): {mae:.3f} metros (ou {(mae*100):.1f} cm em média)")
-    print(f"Raiz do Erro Quadrático Médio (RMSE): {rmse:.3f} metros")
-    print("------------------------------------------")
+    print("\n--- MÉTRICAS DO MODELO ---")
+    print(f"MAE  = {mae:.3f} m")
+    print(f"RMSE = {rmse:.3f} m")
+    print("---------------------------")
 
-    # --- ### NOVO: PRINT DOS RESULTADOS DIÁRIOS ### ---
-    print("\n--- COMPARAÇÃO DIA A DIA (REAL vs. PREVISTO) ---")
-    df_para_print = df_resultado.copy()
-    df_para_print['nivel_real'] = df_para_print['nivel_real'].round(2)
-    df_para_print['nivel_previsto'] = df_para_print['nivel_previsto'].round(2)
-    print(df_para_print.to_string())
-    print("-------------------------------------------------")
-    # --- FIM DO NOVO BLOCO ---
+    print("\n--- RESULTADO DIA A DIA ---")
+    df_print = df_resultado.copy()
+    df_print['nivel_real'] = df_print['nivel_real'].round(2)
+    df_print['nivel_previsto'] = df_print['nivel_previsto'].round(2)
+    print(df_print.to_string())
+    print("---------------------------")
 
     plotar_comparacao(df_resultado)
 
