@@ -32,7 +32,8 @@ def coletar_dados_chuva(dias_historico, dias_previsao):
             "timezone": "America/Sao_Paulo", "past_days": dias_historico, "forecast_days": dias_previsao
         }
         responses = openmeteo.weather_api("https://api.open-meteo.com/v1/forecast", params=params)
-        daily = responses[0].Daily()
+        response = responses[0]
+        daily = response.Daily()
         df = pd.DataFrame(data=daily.Variables(0).ValuesAsNumpy(), columns=[nome_cidade])
         dfs.append(df)
     
