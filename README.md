@@ -1,8 +1,8 @@
 # GuaibaLevelPredict
-Utilizando redes neurais (LSTM) para prever o nível do guaíba através das chuvas nas cidades de seus afluentes.
+Utilizando redes neurais (LSTM) para prever o nível do Guaíba através das chuvas nas cidades de seus afluentes.
 
 
-Versão do Python 10 foi utilizada.
+Versão do Python 10 necessária.
 
 pip install -r requirements.txt
 
