@@ -4,9 +4,7 @@ Utilizando redes neurais (LSTM) para prever o nível do Guaíba através das chu
 
 Versão do Python 10 necessária.
 
-
 pip install -r requirements.txt
-
 
 Caso esteja utilizando o venv do python utilize:
 venv\Scripts\activate.bat     <- No cmd 
