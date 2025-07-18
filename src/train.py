@@ -1,4 +1,4 @@
-# Arquivo: src/train.py (Versão Corrigida)
+# src/train.py (VERSÃO FINAL CORRIGIDA)
 
 import pandas as pd
 import numpy as np
@@ -8,6 +8,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 import os
 import json
+
+# Importa a função de pré-processamento corrigida
 from preprocess_dataframe import preprocess_dataframe
 
 # --- CONSTANTES ---
@@ -28,21 +30,32 @@ def gerar_janelas(df, num_lags, cols_features, col_alvo):
 
 
 def train_model():
-    print("⚙️  Iniciando processo de treinamento com previsão absoluta...")
+    print("⚙️  Iniciando processo de treinamento...")
     np.random.seed(RANDOM_SEED)
     tf.random.set_seed(RANDOM_SEED)
 
-    df = pd.read_csv(ARQUIVO_CSV)
-    df.dropna(how='all', inplace=True)
-
+    df_bruto = pd.read_csv(ARQUIVO_CSV)
+    df_bruto.dropna(how='all', inplace=True)
+    
     COLUNA_NIVEL_ABSOLUTO = 'altura_rio_guaiba_m'
-    FEATURES_ENTRADA = [col for col in df.columns if col != COLUNA_NIVEL_ABSOLUTO and col != 'data']
+
+    # --- CORREÇÃO PRINCIPAL: USA O MESMO PRÉ-PROCESSAMENTO DO BACKTEST ---
+    print("⚙️  Aplicando pré-processamento e gerando features...")
+    df = preprocess_dataframe(df_bruto, coluna_nivel=COLUNA_NIVEL_ABSOLUTO)
+    print("✅ Features geradas.")
+
+    # Define as features a partir das colunas que REALMENTE existem após o processamento
+    FEATURES_ENTRADA = [col for col in df.columns if col not in [COLUNA_NIVEL_ABSOLUTO, 'data']]
 
     scaler_entradas = StandardScaler()
     scaler_alvo = StandardScaler()
 
     entradas_para_scaler = df[FEATURES_ENTRADA]
     alvo_para_scaler = df[[COLUNA_NIVEL_ABSOLUTO]]
+
+    # Opcional: pode remover a linha de print de diagnóstico que adicionamos antes
+    print("\n--- COLUNAS USADAS NO TREINO ---", sorted(entradas_para_scaler.columns), "\n", flush=True)
+
     scaler_entradas.fit(entradas_para_scaler)
     scaler_alvo.fit(alvo_para_scaler)
 
@@ -81,12 +94,13 @@ def train_model():
         sample_weight=pesos_train
     )
 
-    print("💾 Salvando modelo e escalers...")
+    print("💾 Salvando modelo e scalers...")
     os.makedirs('models', exist_ok=True)
     model.save('models/lstm_model_absolute.keras')
     joblib.dump(scaler_entradas, 'models/scaler_entradas.pkl')
     joblib.dump(scaler_alvo, 'models/scaler_alvo.pkl')
 
+    # Salva a lista de colunas que foi REALMENTE usada para o treino
     with open('models/training_columns.json', 'w') as f:
         json.dump({
             'features_entrada': FEATURES_ENTRADA,

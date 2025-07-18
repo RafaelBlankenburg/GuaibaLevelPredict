@@ -1,27 +1,40 @@
-# src/preprocess_dataframe.py (Versão Corrigida)
+# src/preprocess_dataframe.py (VERSÃO CORRIGIDA E OTIMIZADA)
 
 import pandas as pd
 
 def preprocess_dataframe(df: pd.DataFrame, coluna_nivel: str, incluir_variaveis=True):
-    # Usamos o índice (que contém as datas) para criar uma coluna 'data'
-    # Fazemos isso antes de qualquer outra operação para garantir que não se perca
-    if isinstance(df.index, pd.DatetimeIndex):
-        df = df.reset_index().rename(columns={'index': 'data'})
+    df_original = df.copy()
 
-    cidades = [col for col in df.columns if col.endswith('_mm')]
+    # Se o índice for de datas, move para uma coluna 'data'
+    if isinstance(df_original.index, pd.DatetimeIndex):
+        df_original = df_original.reset_index().rename(columns={'index': 'data'})
 
-    if incluir_variaveis:
-        for cidade in cidades:
-            df[f'delta_{cidade}'] = df[cidade].diff()
-            df[f'acum_{cidade}_3d'] = df[cidade].rolling(window=3).sum()
-            df[f'acum_{cidade}_5d'] = df[cidade].rolling(window=5).sum()
-            df[f'acum_{cidade}_7d'] = df[cidade].rolling(window=7).sum()
-            df[f'acum_{cidade}_10d'] = df[cidade].rolling(window=10).sum()
+    if not incluir_variaveis:
+        return df_original.dropna().reset_index(drop=True)
 
-        if coluna_nivel in df.columns:
-            df['tendencia_5d'] = df[coluna_nivel].diff().rolling(window=5).sum()
+    # --- CORREÇÃO DO BUG PRINCIPAL ---
+    # Identifica as cidades de forma correta e segura
+    cidades = [col for col in df_original.columns if str(col).endswith('_mm')]
     
-    # Remove as linhas com NaN geradas pelo rolling window e reseta o índice
-    # Desta vez, drop=True não é problema, pois a data já está salva na coluna 'data'
-    df = df.dropna().reset_index(drop=True)
-    return df
+    novas_colunas = {}
+
+    # Cria todas as novas features em um dicionário (mais rápido)
+    for cidade in cidades:
+        novas_colunas[f'delta_{cidade}'] = df_original[cidade].diff()
+        novas_colunas[f'acum_{cidade}_3d'] = df_original[cidade].rolling(window=3).sum()
+        novas_colunas[f'acum_{cidade}_5d'] = df_original[cidade].rolling(window=5).sum()
+        novas_colunas[f'acum_{cidade}_7d'] = df_original[cidade].rolling(window=7).sum()
+        novas_colunas[f'acum_{cidade}_10d'] = df_original[cidade].rolling(window=10).sum()
+
+    if coluna_nivel in df_original.columns:
+        novas_colunas['tendencia_5d'] = df_original[coluna_nivel].diff().rolling(window=5).sum()
+
+    df_novas = pd.DataFrame(novas_colunas)
+
+    # Junta o dataframe original com as novas colunas de uma só vez
+    df_final = pd.concat([df_original, df_novas], axis=1)
+
+    # Remove linhas com valores NaN e reseta o índice
+    df_final = df_final.dropna().reset_index(drop=True)
+    
+    return df_final
