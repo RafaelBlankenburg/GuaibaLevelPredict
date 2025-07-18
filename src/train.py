@@ -1,4 +1,4 @@
-# Arquivo: src/train.py
+# Arquivo: src/train.py (Versão Corrigida)
 
 import pandas as pd
 import numpy as np
@@ -34,8 +34,6 @@ def train_model():
 
     df = pd.read_csv(ARQUIVO_CSV)
     df.dropna(how='all', inplace=True)
-
-    df = preprocess_dataframe(df)
 
     COLUNA_NIVEL_ABSOLUTO = 'altura_rio_guaiba_m'
     FEATURES_ENTRADA = [col for col in df.columns if col != COLUNA_NIVEL_ABSOLUTO and col != 'data']
