@@ -13,7 +13,7 @@ import json
 from preprocess_dataframe import preprocess_dataframe
 
 # --- CONSTANTES ---
-NUM_LAGS = 14
+NUM_LAGS = 7
 RANDOM_SEED = 42
 ARQUIVO_CSV = 'data/rain.csv'
 FATOR_PESO = 3.0
@@ -30,7 +30,7 @@ def gerar_janelas(df, num_lags, cols_features, col_alvo):
 
 
 def train_model():
-    print("⚙️  Iniciando processo de treinamento...")
+    print(f"⚙️  Iniciando treinamento: LAGS={NUM_LAGS}, ACUM_MAX=7d (Estratégia DELTA)...")
     np.random.seed(RANDOM_SEED)
     tf.random.set_seed(RANDOM_SEED)
 
@@ -38,41 +38,46 @@ def train_model():
     df_bruto.dropna(how='all', inplace=True)
     
     COLUNA_NIVEL_ABSOLUTO = 'altura_rio_guaiba_m'
+    COLUNA_ALVO_DELTA = 'delta_nivel'
 
-    # --- CORREÇÃO PRINCIPAL: USA O MESMO PRÉ-PROCESSAMENTO DO BACKTEST ---
-    print("⚙️  Aplicando pré-processamento e gerando features...")
+    df_bruto[COLUNA_ALVO_DELTA] = df_bruto[COLUNA_NIVEL_ABSOLUTO].diff()
+    
+    print("ℹ️  Gerando datas sintéticas para o arquivo de treino...")
+    num_dias = len(df_bruto)
+    data_inicio_sintetica = pd.to_datetime('2020-01-01')
+    datas_sinteticas = pd.date_range(start=data_inicio_sintetica, periods=num_dias, freq='D')
+    df_bruto['data'] = datas_sinteticas
+
+    print("⚙️  Aplicando pré-processamento...")
     df = preprocess_dataframe(df_bruto, coluna_nivel=COLUNA_NIVEL_ABSOLUTO)
     print("✅ Features geradas.")
 
-    # Define as features a partir das colunas que REALMENTE existem após o processamento
-    FEATURES_ENTRADA = [col for col in df.columns if col not in [COLUNA_NIVEL_ABSOLUTO, 'data']]
+    FEATURES_ENTRADA = [col for col in df.columns if col not in [COLUNA_NIVEL_ABSOLUTO, COLUNA_ALVO_DELTA, 'data']]
 
     scaler_entradas = StandardScaler()
-    scaler_alvo = StandardScaler()
+    scaler_delta = StandardScaler()
 
     entradas_para_scaler = df[FEATURES_ENTRADA]
-    alvo_para_scaler = df[[COLUNA_NIVEL_ABSOLUTO]]
-
-    # Opcional: pode remover a linha de print de diagnóstico que adicionamos antes
-    print("\n--- COLUNAS USADAS NO TREINO ---", sorted(entradas_para_scaler.columns), "\n", flush=True)
+    alvo_para_scaler = df[[COLUNA_ALVO_DELTA]]
 
     scaler_entradas.fit(entradas_para_scaler)
-    scaler_alvo.fit(alvo_para_scaler)
+    scaler_delta.fit(alvo_para_scaler)
 
     df_scaled_entradas = pd.DataFrame(scaler_entradas.transform(entradas_para_scaler), columns=FEATURES_ENTRADA)
-    df_scaled_alvo = pd.DataFrame(scaler_alvo.transform(alvo_para_scaler), columns=[COLUNA_NIVEL_ABSOLUTO])
+    df_scaled_alvo = pd.DataFrame(scaler_delta.transform(alvo_para_scaler), columns=[COLUNA_ALVO_DELTA])
     df_scaled = pd.concat([df_scaled_entradas, df_scaled_alvo], axis=1)
 
-    X, y_scaled = gerar_janelas(df_scaled, NUM_LAGS, FEATURES_ENTRADA, COLUNA_NIVEL_ABSOLUTO)
-    _, y_original = gerar_janelas(df, NUM_LAGS, FEATURES_ENTRADA, COLUNA_NIVEL_ABSOLUTO)
-
-    pesos_totais = 1 + np.abs(pd.Series(y_original).diff().fillna(0)) * FATOR_PESO
+    X, y_scaled = gerar_janelas(df_scaled, NUM_LAGS, FEATURES_ENTRADA, COLUNA_ALVO_DELTA)
+    _, y_original_delta = gerar_janelas(df, NUM_LAGS, FEATURES_ENTRADA, COLUNA_ALVO_DELTA)
+    
+    pesos_totais = 1 + np.abs(y_original_delta) * FATOR_PESO
 
     X_train, X_test, y_train, y_test, pesos_train, _ = train_test_split(
         X, y_scaled, pesos_totais, test_size=0.2, random_state=RANDOM_SEED, shuffle=False
     )
 
     num_features = len(FEATURES_ENTRADA)
+    
     model = tf.keras.models.Sequential([
         tf.keras.layers.LSTM(64, return_sequences=True, input_shape=(NUM_LAGS, num_features)),
         tf.keras.layers.Dropout(0.2),
@@ -80,34 +85,31 @@ def train_model():
         tf.keras.layers.Dropout(0.2),
         tf.keras.layers.Dense(1)
     ])
-
+    
     model.compile(optimizer='adam', loss='mse')
-
-    print(f"🧠 Treinando com {len(X_train)} amostras e {num_features} features...")
+    model.summary()
+    
+    print(f"🧠 Treinando modelo DELTA com {len(X_train)} amostras e {num_features} features...")
     model.fit(
         X_train, y_train,
-        epochs=50,
+        epochs=100,
         batch_size=16,
         validation_data=(X_test, y_test),
-        callbacks=[tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)],
+        callbacks=[tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True)],
         verbose=1,
         sample_weight=pesos_train
     )
 
-    print("💾 Salvando modelo e scalers...")
+    print("💾 Salvando modelo e scalers DELTA...")
     os.makedirs('models', exist_ok=True)
-    model.save('models/lstm_model_absolute.keras')
+    model.save('models/lstm_model_delta.keras')
     joblib.dump(scaler_entradas, 'models/scaler_entradas.pkl')
-    joblib.dump(scaler_alvo, 'models/scaler_alvo.pkl')
+    joblib.dump(scaler_delta, 'models/scaler_delta.pkl')
 
-    # Salva a lista de colunas que foi REALMENTE usada para o treino
     with open('models/training_columns.json', 'w') as f:
-        json.dump({
-            'features_entrada': FEATURES_ENTRADA,
-            'coluna_nivel_absoluto': COLUNA_NIVEL_ABSOLUTO
-        }, f)
+        json.dump({'features_entrada': FEATURES_ENTRADA}, f)
 
-    print("✅ Modelo salvo com sucesso!")
+    print("✅ Modelo DELTA salvo com sucesso!")
 
 
 if __name__ == '__main__':
