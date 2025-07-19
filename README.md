@@ -16,3 +16,5 @@ python src/train.py
 Para fazer a previsão:
 python main.py
 
+Para rodar o backtest:
+python backtest.py
