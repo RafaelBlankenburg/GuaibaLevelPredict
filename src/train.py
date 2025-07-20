@@ -13,10 +13,10 @@ import json
 from preprocess_dataframe import preprocess_dataframe
 
 # --- CONSTANTES ---
-NUM_LAGS = 7
-RANDOM_SEED = 42
+NUM_LAGS = 4
+RANDOM_SEED = 2000
 ARQUIVO_CSV = 'data/rain.csv'
-FATOR_PESO = 3.0
+FATOR_PESO = 15.0
 
 
 def gerar_janelas(df, num_lags, cols_features, col_alvo):
@@ -29,8 +29,9 @@ def gerar_janelas(df, num_lags, cols_features, col_alvo):
     return np.array(X), np.array(y)
 
 
+
 def train_model():
-    print(f"⚙️  Iniciando treinamento: LAGS={NUM_LAGS}, ACUM_MAX=7d (Estratégia DELTA)...")
+    print(f"⚙️  Iniciando treinamento AGRESSIVO: LAGS={NUM_LAGS}, FATOR_PESO={FATOR_PESO} (Estratégia DELTA)...")
     np.random.seed(RANDOM_SEED)
     tf.random.set_seed(RANDOM_SEED)
 
@@ -48,7 +49,7 @@ def train_model():
     datas_sinteticas = pd.date_range(start=data_inicio_sintetica, periods=num_dias, freq='D')
     df_bruto['data'] = datas_sinteticas
 
-    print("⚙️  Aplicando pré-processamento...")
+    print("⚙️  Aplicando pré-processamento com feature 'Bomba de Chuva'...")
     df = preprocess_dataframe(df_bruto, coluna_nivel=COLUNA_NIVEL_ABSOLUTO)
     print("✅ Features geradas.")
 
@@ -70,7 +71,8 @@ def train_model():
     X, y_scaled = gerar_janelas(df_scaled, NUM_LAGS, FEATURES_ENTRADA, COLUNA_ALVO_DELTA)
     _, y_original_delta = gerar_janelas(df, NUM_LAGS, FEATURES_ENTRADA, COLUNA_ALVO_DELTA)
     
-    pesos_totais = 1 + np.abs(y_original_delta) * FATOR_PESO
+    # --- MUDANÇA: Ponderação Quadrática para dar peso exponencial a grandes variações ---
+    pesos_totais = 1 + np.power(np.abs(y_original_delta) * FATOR_PESO, 2)
 
     X_train, X_test, y_train, y_test, pesos_train, _ = train_test_split(
         X, y_scaled, pesos_totais, test_size=0.2, random_state=RANDOM_SEED, shuffle=False
@@ -110,7 +112,6 @@ def train_model():
         json.dump({'features_entrada': FEATURES_ENTRADA}, f)
 
     print("✅ Modelo DELTA salvo com sucesso!")
-
 
 if __name__ == '__main__':
     train_model()

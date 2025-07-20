@@ -1,7 +1,13 @@
-# src/preprocess_dataframe.py (VERSÃO SIMPLIFICADA)
+# src/preprocess_dataframe.py (VERSÃO COM FEATURE "BOMBA DE CHUVA")
 
 import pandas as pd
 import numpy as np
+
+# Cidades mais ao norte e no alto da bacia, que impactam primeiro
+CIDADES_CRITICAS = [
+    "vacaria_mm", "sao_francisco_de_paula_mm", "caxias_do_sul_mm", 
+    "bento_goncalves_mm", "passo_fundo_mm", "soledade_mm", "lagoa_vermelha_mm"
+]
 
 def preprocess_dataframe(df: pd.DataFrame, coluna_nivel: str):
     df_original = df.copy()
@@ -22,8 +28,11 @@ def preprocess_dataframe(df: pd.DataFrame, coluna_nivel: str):
         for window in [3, 5, 7]:
             df_features[f'acum_{cidade}_{window}d'] = df_original[cidade].rolling(window=window).sum()
 
-    # REMOVEMOS AS FEATURES QUE DEPENDEM DO NÍVEL PASSADO
-    # 'nivel_lag_1' e 'tendencia_5d' não são mais criadas aqui.
+    # --- FEATURE NOVA: "Bomba de Chuva" ---
+    # Soma a chuva das cidades mais críticas para criar um sinal de alerta forte.
+    cidades_existentes = [c for c in CIDADES_CRITICAS if c in df_original.columns]
+    df_features['bomba_chuva_acum_3d'] = df_original[cidades_existentes].rolling(window=3).sum().sum(axis=1)
+    df_features['bomba_chuva_acum_7d'] = df_original[cidades_existentes].rolling(window=7).sum().sum(axis=1)
 
     if has_date_column:
         df_features['mes_sin'] = np.sin(2 * np.pi * df_original['data'].dt.month / 12)

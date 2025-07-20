@@ -19,8 +19,8 @@ from src.preprocess_dataframe import preprocess_dataframe
 ARQUIVO_NIVEIS_REAIS_CSV = 'data/niveis_reais_diarios.csv'
 DATA_INICIO_PREVISAO = "2024-04-08"
 DATA_FIM_PREVISAO = "2024-05-06"
-NIVEL_INICIAL_REAL = 0.83
-NUM_LAGS = 7
+NIVEL_INICIAL_REAL = 0.80
+NUM_LAGS = 4
 COTA_INUNDACAO = 3.0
 
 CIDADES = {
