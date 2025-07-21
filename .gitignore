@@ -1,7 +1,5 @@
 
 venv/
-models/*.keras
-models/*.pkl
 data/*.tmp
 data/*.bak
 data/~*
