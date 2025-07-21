@@ -1,120 +1,106 @@
-# main.py (Versão Completa e Corrigida)
+# main.py (VERSÃO FINAL - CLONE LÓGICO DO BACKTEST)
 
 import pandas as pd
 import numpy as np
 import os 
 import json
-
-# --- Alteração 1: Adicionar importações para carregar o modelo e scalers ---
 import joblib
 import tensorflow as tf
-# --- Fim da Alteração 1 ---
 
 from src.data_collection import coletar_dados_chuva, coletar_nivel_atual_rio
-from src.prediction import prever_nivel_rio_sequencia
 from src.visualization import gerar_grafico_previsao
 from src.preprocess_dataframe import preprocess_dataframe
 
 
-# --- CONFIGURAÇÕES GERAIS DA EXECUÇÃO ---
-NUM_DIAS_HISTORICO = 14
-NUM_LAGS_MODELO = 10
+# --- CONFIGURAÇÕES GERAIS ALINHADAS COM O BACKTEST ---
+NUM_LAGS_MODELO = 5 # <--- ALINHADO com o seu backtest.py
+
 NUM_DIAS_PREVISAO_CHUVA = 14
 DIAS_ADICIONAIS_ESTIMATIVA = 10
 DIAS_TOTAIS_PREVISAO = NUM_DIAS_PREVISAO_CHUVA + DIAS_ADICIONAIS_ESTIMATIVA
-COTA_INUNDACAO = 3.0 # Usando 3.0 como definido no seu código de visualização
+COTA_INUNDACAO = 3.0
 
 def run_prediction_scenarios():
-    """
-    Orquestra a execução da pipeline, baseada em cenários e com separação
-    visual entre previsão e estimativa.
-    """
-    print("--- INICIANDO ROTINA DE PREVISÃO E ESTIMATIVA DO NÍVEL DO RIO ---")
-
+    print("--- INICIANDO ROTINA DE PREVISÃO (LÓGICA 100% ALINHADA AO BACKTEST) ---")
     os.makedirs('results', exist_ok=True) 
 
-    # --- Alteração 2: Carregar o modelo e os scalers salvos pelo train.py ---
-    print("\n--- Carregando modelo e scalers salvos ---")
+    print("\n--- Carregando modelo DELTA e scalers salvos ---")
     try:
-        model = tf.keras.models.load_model('models/lstm_model_absolute.keras')
+        model = tf.keras.models.load_model('models/lstm_model_delta.keras')
+        scaler_saida = joblib.load('models/scaler_delta.pkl')
         scaler_entradas = joblib.load('models/scaler_entradas.pkl')
-        # Atenção: o arquivo de treino salva como 'scaler_alvo.pkl'
-        scaler_saida = joblib.load('models/scaler_alvo.pkl') 
-        print("✅ Modelo e scalers carregados com sucesso.")
-    except IOError as e:
+        with open('models/training_columns.json', 'r') as f:
+            FEATURES_ENTRADA = json.load(f)['features_entrada']
+        print("✅ Modelo e scalers DELTA carregados com sucesso.")
+    except Exception as e:
         print(f"❌ Erro ao carregar os arquivos do modelo: {e}")
-        print("Por favor, certifique-se de que o script 'train.py' foi executado com sucesso e os arquivos estão na pasta 'models/'.")
-        return # Encerra a execução se os arquivos não forem encontrados
-    # --- Fim da Alteração 2 ---
+        return
 
-    df_chuva_base = coletar_dados_chuva(NUM_DIAS_HISTORICO, NUM_DIAS_PREVISAO_CHUVA)
+    # 1. COLETA DE DADOS (LÓGICA IDÊNTICA AO BACKTEST)
+    DIAS_ROLLING_MAX = 7
+    NUM_DIAS_HISTORICO = NUM_LAGS_MODELO + DIAS_ROLLING_MAX # <--- ALINHADO
+    
+    df_chuva_total = coletar_dados_chuva(NUM_DIAS_HISTORICO, NUM_DIAS_PREVISAO_CHUVA)
     nivel_atual = coletar_nivel_atual_rio()
-
-    print("\n---  Cenário 1: PREVISÃO COM ESTIAGEM (SEM CHUVA APÓS D14) ---")
-    df_chuva_cenario1 = df_chuva_base.copy()
-
+    
+    # 2. PREPARAÇÃO DO CENÁRIO
+    print("\n--- Cenário 1: PREVISÃO COM ESTIAGEM (SEM CHUVA APÓS D14) ---")
+    df_chuva_cenario1 = df_chuva_total.copy()
     if DIAS_ADICIONAIS_ESTIMATIVA > 0:
-        datas_futuras = pd.to_datetime(pd.date_range(start=df_chuva_cenario1.index[-1] + pd.Timedelta(days=1), periods=DIAS_ADICIONAIS_ESTIMATIVA, freq='D'))
-        df_zeros = pd.DataFrame(0, index=datas_futuras, columns=df_chuva_cenario1.columns)
+        datas_futuras = pd.date_range(start=df_chuva_cenario1.index[-1] + pd.Timedelta(days=1), periods=DIAS_ADICIONAIS_ESTIMATIVA, freq='D')
+        df_zeros = pd.DataFrame(0, index=datas_futuras, columns=[col for col in df_chuva_cenario1.columns if col.endswith('_mm')])
         df_chuva_cenario1 = pd.concat([df_chuva_cenario1, df_zeros])
 
-    df_chuva_cenario1["altura_rio_guaiba_m"] = nivel_atual
-    df_chuva_cenario1 = preprocess_dataframe(df_chuva_cenario1, coluna_nivel='altura_rio_guaiba_m')
+    # 3. PROCESSAMENTO ÚNICO DE FEATURES (LÓGICA IDÊNTICA AO BACKTEST)
+    df_chuva_cenario1['altura_rio_guaiba_m'] = 0 
+    df_features_processadas = preprocess_dataframe(df_chuva_cenario1, coluna_nivel='altura_rio_guaiba_m')
+    df_features_processadas['data'] = pd.to_datetime(df_features_processadas['data'])
+    df_features_processadas.set_index('data', inplace=True)
 
-    with open("models/training_columns.json", "r") as f:
-        colunas_info = json.load(f)
+    # 4. LOOP DE PREVISÃO (LÓGICA IDÊNTICA AO BACKTEST)
+    previsoes = []
+    nivel_anterior = nivel_atual
+    hoje = pd.to_datetime('today').normalize()
+    
+    print("🔮 Simulando previsão dia a dia...")
+    for data_previsao in pd.date_range(start=hoje, periods=DIAS_TOTAIS_PREVISAO):
+        fim_janela = data_previsao - pd.Timedelta(days=1)
+        inicio_janela = fim_janela - pd.Timedelta(days=NUM_LAGS_MODELO - 1)
+        
+        janela_features = df_features_processadas.loc[inicio_janela:fim_janela]
+        
+        X = janela_features[FEATURES_ENTRADA]
+        X_scaled = scaler_entradas.transform(X)
+        X_input = np.expand_dims(X_scaled, axis=0)
 
-    features_entrada = colunas_info["features_entrada"]
+        delta_scaled = model.predict(X_input, verbose=0)[0][0]
+        delta_previsto = scaler_saida.inverse_transform([[delta_scaled]])[0][0]
+        
+        nivel_previsto = nivel_anterior + delta_previsto
+        nivel_previsto = max(0, nivel_previsto) # Impede níveis negativos
+        previsoes.append({'data': data_previsao, 'nivel_m': nivel_previsto})
+        
+        nivel_anterior = nivel_previsto
 
-    # Esta chamada agora funcionará, pois as variáveis 'model', 'scaler_entradas' e 'scaler_saida' existem.
-    previsao_total_numerica = prever_nivel_rio_sequencia(
-        df=df_chuva_cenario1,
-        coluna_nivel="altura_rio_guaiba_m",
-        FEATURES_ENTRADA=features_entrada,
-        scaler_entradas=scaler_entradas,
-        scaler_saida=scaler_saida,
-        model=model,
-        num_lags_modelo=NUM_LAGS_MODELO
-    )
-    # O nome da coluna previsto na função de predição é 'nivel_previsto', vamos renomear
-    previsao_total_numerica.rename(columns={'nivel_previsto': 'nivel_m'}, inplace=True)
+    df_previsao_final = pd.DataFrame(previsoes)
 
-    # --- Chamada para gerar o gráfico ---
+    # 5. GERAÇÃO DE GRÁFICOS E RESULTADOS
     gerar_grafico_previsao(
-        df_previsao=previsao_total_numerica,
+        df_previsao=df_previsao_final,
         ponto_de_corte=NUM_DIAS_PREVISAO_CHUVA,
         cota_inundacao=COTA_INUNDACAO,
         caminho_saida='results/previsao_nivel_rio.png'
     )
 
-    # --- Preparação para o print no console ---
-    df_previsao_real = previsao_total_numerica.iloc[:NUM_DIAS_PREVISAO_CHUVA]
-    df_estimativa = previsao_total_numerica.iloc[NUM_DIAS_PREVISAO_CHUVA:]
-
-    # Cria uma linha de texto para separar as seções
-    linha_separadora_data = df_previsao_real['data'].iloc[-1] + pd.Timedelta(days=1)
-    linha_separadora = pd.DataFrame([{'data': '--- Início da Estimativa ---', 'nivel_m': '---'}])
+    df_previsao_texto = df_previsao_final.copy()
+    df_previsao_texto['nivel_m'] = df_previsao_texto['nivel_m'].round(2)
+    df_previsao_texto['data'] = pd.to_datetime(df_previsao_texto['data']).dt.strftime('%d/%m/%Y')
     
-    # Concatena os dataframes para exibição
-    df_resultado_final = pd.concat([df_previsao_real, linha_separadora, df_estimativa], ignore_index=True)
-
-    # Salva o CSV
-    df_resultado_final.to_csv("results/previsao_nivel_rio_com_estimativa.csv", index=False)
-    print("\n✅ Previsões e estimativas em texto salvas em results/previsao_nivel_rio_com_estimativa.csv")
-
     print(f"\n📈 Previsões para {NUM_DIAS_PREVISAO_CHUVA} dias e Estimativas para mais {DIAS_ADICIONAIS_ESTIMATIVA} dias:\n")
-
-    # Formata a coluna numérica para exibição, tratando o texto do separador
-    df_resultado_final['nivel_m'] = pd.to_numeric(df_resultado_final['nivel_m'], errors='coerce').round(2)
-    df_resultado_final['nivel_m'] = df_resultado_final['nivel_m'].apply(lambda x: f"{x:.2f}" if pd.notna(x) else '---')
-    df_resultado_final.loc[df_resultado_final['data'] == '--- Início da Estimativa ---', 'nivel_m'] = '---'
+    print(df_previsao_texto.to_string(index=False))
     
-    # Formata a data
-    df_resultado_final['data'] = pd.to_datetime(df_resultado_final['data'], errors='coerce').dt.strftime('%d/%m/%Y')
-    df_resultado_final.loc[df_resultado_final['data'].isna(), 'data'] = '--- Início da Estimativa ---'
-
-
-    print(df_resultado_final.to_string(index=False))
+    df_previsao_texto.to_csv("results/previsao_nivel_rio_com_estimativa.csv", index=False)
+    print("\n✅ Previsões salvas em results/previsao_nivel_rio_com_estimativa.csv")
 
 
 if __name__ == "__main__":

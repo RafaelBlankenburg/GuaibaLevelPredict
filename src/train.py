@@ -5,7 +5,7 @@ import numpy as np
 import joblib
 import tensorflow as tf
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import MinMaxScaler
 import os
 import json
 
@@ -31,7 +31,7 @@ def gerar_janelas(df, num_lags, cols_features, col_alvo):
 
 
 def train_model():
-    print(f"⚙️  Iniciando treinamento AGRESSIVO: LAGS={NUM_LAGS}, FATOR_PESO={FATOR_PESO} (Estratégia DELTA)...")
+    print(f"⚙️  Iniciando treinamento com MinMaxScaler: LAGS={NUM_LAGS} (Estratégia DELTA)...")
     np.random.seed(RANDOM_SEED)
     tf.random.set_seed(RANDOM_SEED)
 
@@ -49,14 +49,15 @@ def train_model():
     datas_sinteticas = pd.date_range(start=data_inicio_sintetica, periods=num_dias, freq='D')
     df_bruto['data'] = datas_sinteticas
 
-    print("⚙️  Aplicando pré-processamento com feature 'Bomba de Chuva'...")
+    print("⚙️  Aplicando pré-processamento...")
     df = preprocess_dataframe(df_bruto, coluna_nivel=COLUNA_NIVEL_ABSOLUTO)
     print("✅ Features geradas.")
 
     FEATURES_ENTRADA = [col for col in df.columns if col not in [COLUNA_NIVEL_ABSOLUTO, COLUNA_ALVO_DELTA, 'data']]
 
-    scaler_entradas = StandardScaler()
-    scaler_delta = StandardScaler()
+    # --- CORREÇÃO FUNDAMENTAL: Usar MinMaxScaler ---
+    scaler_entradas = MinMaxScaler()
+    scaler_delta = MinMaxScaler()
 
     entradas_para_scaler = df[FEATURES_ENTRADA]
     alvo_para_scaler = df[[COLUNA_ALVO_DELTA]]
@@ -71,8 +72,7 @@ def train_model():
     X, y_scaled = gerar_janelas(df_scaled, NUM_LAGS, FEATURES_ENTRADA, COLUNA_ALVO_DELTA)
     _, y_original_delta = gerar_janelas(df, NUM_LAGS, FEATURES_ENTRADA, COLUNA_ALVO_DELTA)
     
-    # --- MUDANÇA: Ponderação Quadrática para dar peso exponencial a grandes variações ---
-    pesos_totais = 1 + np.power(np.abs(y_original_delta) * FATOR_PESO, 2)
+    pesos_totais = 1 + np.abs(y_original_delta) * FATOR_PESO
 
     X_train, X_test, y_train, y_test, pesos_train, _ = train_test_split(
         X, y_scaled, pesos_totais, test_size=0.2, random_state=RANDOM_SEED, shuffle=False
@@ -102,7 +102,7 @@ def train_model():
         sample_weight=pesos_train
     )
 
-    print("💾 Salvando modelo e scalers DELTA...")
+    print("💾 Salvando modelo e scalers (MinMaxScaler)...")
     os.makedirs('models', exist_ok=True)
     model.save('models/lstm_model_delta.keras')
     joblib.dump(scaler_entradas, 'models/scaler_entradas.pkl')

@@ -44,6 +44,7 @@ def coletar_dados_chuva(dias_historico, dias_previsao):
     all_dates = pd.date_range(start=start_date, periods=len(chuva_df), freq='D')
     chuva_df.index = all_dates
     
+    
     print("✅ Dados de chuva coletados.")
     return chuva_df
 
