@@ -13,10 +13,10 @@ import json
 from preprocess_dataframe import preprocess_dataframe
 
 # --- CONSTANTES ---
-NUM_LAGS = 5
-RANDOM_SEED = 1000
+NUM_LAGS = 6
+RANDOM_SEED = 42
 ARQUIVO_CSV = 'data/rain.csv'
-FATOR_PESO = 35.0
+FATOR_PESO = 50.0
 
 
 def gerar_janelas(df, num_lags, cols_features, col_alvo):
@@ -81,9 +81,9 @@ def train_model():
     num_features = len(FEATURES_ENTRADA)
     
     model = tf.keras.models.Sequential([
-        tf.keras.layers.LSTM(70, return_sequences=True, input_shape=(NUM_LAGS, num_features)),
+        tf.keras.layers.LSTM(80, return_sequences=True, input_shape=(NUM_LAGS, num_features)),
         tf.keras.layers.Dropout(0.2),
-        tf.keras.layers.LSTM(35),
+        tf.keras.layers.LSTM(40),
         tf.keras.layers.Dropout(0.2),
         tf.keras.layers.Dense(1)
     ])
@@ -94,7 +94,7 @@ def train_model():
     print(f"🧠 Treinando modelo DELTA com {len(X_train)} amostras e {num_features} features...")
     model.fit(
         X_train, y_train,
-        epochs=150,
+        epochs=200,
         batch_size=5,
         validation_data=(X_test, y_test),
         callbacks=[tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True)],
