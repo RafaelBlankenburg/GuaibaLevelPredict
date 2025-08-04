@@ -1,4 +1,4 @@
-# main.py (VERSÃO FINAL - CLONE LÓGICO DO BACKTEST)
+# main.py (VERSÃO FINAL, SIMPLES E ROBUSTA)
 
 import pandas as pd
 import numpy as np
@@ -11,20 +11,29 @@ from src.data_collection import coletar_dados_chuva, coletar_nivel_atual_rio
 from src.visualization import gerar_grafico_previsao
 from src.preprocess_dataframe import preprocess_dataframe
 
-
-# --- CONFIGURAÇÕES GERAIS ALINHADAS COM O BACKTEST ---
-NUM_LAGS_MODELO = 5 # <--- ALINHADO com o seu backtest.py
+# --- CONFIGURAÇÕES GERAIS ---
+NUM_LAGS_MODELO = 7
+DIAS_ROLLING_MAX = 7 
+NUM_DIAS_HISTORICO = NUM_LAGS_MODELO + DIAS_ROLLING_MAX + 5
 
 NUM_DIAS_PREVISAO_CHUVA = 14
 DIAS_ADICIONAIS_ESTIMATIVA = 10
 DIAS_TOTAIS_PREVISAO = NUM_DIAS_PREVISAO_CHUVA + DIAS_ADICIONAIS_ESTIMATIVA
 COTA_INUNDACAO = 3.0
 
+def gerar_janelas_para_previsao(df_features, num_lags):
+    """Gera todas as janelas de dados necessárias para a previsão de uma vez."""
+    X = []
+    # Começamos do primeiro dia que tem um histórico completo de 'num_lags' para trás
+    for i in range(num_lags, len(df_features)):
+        janela_x = df_features.iloc[i - num_lags : i].values
+        X.append(janela_x)
+    return np.array(X)
+
 def run_prediction_scenarios():
-    print("--- INICIANDO ROTINA DE PREVISÃO (LÓGICA 100% ALINHADA AO BACKTEST) ---")
+    print("--- INICIANDO ROTINA DE PREVISÃO (LÓGICA DIRETA) ---")
     os.makedirs('results', exist_ok=True) 
 
-    print("\n--- Carregando modelo DELTA e scalers salvos ---")
     try:
         model = tf.keras.models.load_model('models/lstm_model_delta.keras')
         scaler_saida = joblib.load('models/scaler_delta.pkl')
@@ -36,55 +45,49 @@ def run_prediction_scenarios():
         print(f"❌ Erro ao carregar os arquivos do modelo: {e}")
         return
 
-    # 1. COLETA DE DADOS (LÓGICA IDÊNTICA AO BACKTEST)
-    DIAS_ROLLING_MAX = 7
-    NUM_DIAS_HISTORICO = NUM_LAGS_MODELO + DIAS_ROLLING_MAX # <--- ALINHADO
-    
+    # 1. COLETA DE DADOS
     df_chuva_total = coletar_dados_chuva(NUM_DIAS_HISTORICO, NUM_DIAS_PREVISAO_CHUVA)
     nivel_atual = coletar_nivel_atual_rio()
     
-    # 2. PREPARAÇÃO DO CENÁRIO
-    print("\n--- Cenário 1: PREVISÃO COM ESTIAGEM (SEM CHUVA APÓS D14) ---")
+    # 2. PREPARAÇÃO DO CENÁRIO DE PREVISÃO
     df_chuva_cenario1 = df_chuva_total.copy()
     if DIAS_ADICIONAIS_ESTIMATIVA > 0:
         datas_futuras = pd.date_range(start=df_chuva_cenario1.index[-1] + pd.Timedelta(days=1), periods=DIAS_ADICIONAIS_ESTIMATIVA, freq='D')
         df_zeros = pd.DataFrame(0, index=datas_futuras, columns=[col for col in df_chuva_cenario1.columns if col.endswith('_mm')])
         df_chuva_cenario1 = pd.concat([df_chuva_cenario1, df_zeros])
 
-    # 3. PROCESSAMENTO ÚNICO DE FEATURES (LÓGICA IDÊNTICA AO BACKTEST)
+    # 3. PROCESSAMENTO ÚNICO DE FEATURES
     df_chuva_cenario1['altura_rio_guaiba_m'] = 0 
     df_features_processadas = preprocess_dataframe(df_chuva_cenario1, coluna_nivel='altura_rio_guaiba_m')
-    df_features_processadas['data'] = pd.to_datetime(df_features_processadas['data'])
-    df_features_processadas.set_index('data', inplace=True)
-
-    # 4. LOOP DE PREVISÃO (LÓGICA IDÊNTICA AO BACKTEST)
-    previsoes = []
-    nivel_anterior = nivel_atual
-    hoje = pd.to_datetime('today').normalize()
+    df_features_processadas = df_features_processadas[FEATURES_ENTRADA]
     
-    print("🔮 Simulando previsão dia a dia...")
-    for data_previsao in pd.date_range(start=hoje, periods=DIAS_TOTAIS_PREVISAO):
-        fim_janela = data_previsao - pd.Timedelta(days=1)
-        inicio_janela = fim_janela - pd.Timedelta(days=NUM_LAGS_MODELO - 1)
-        
-        janela_features = df_features_processadas.loc[inicio_janela:fim_janela]
-        
-        X = janela_features[FEATURES_ENTRADA]
-        X_scaled = scaler_entradas.transform(X)
-        X_input = np.expand_dims(X_scaled, axis=0)
-
-        delta_scaled = model.predict(X_input, verbose=0)[0][0]
-        delta_previsto = scaler_saida.inverse_transform([[delta_scaled]])[0][0]
-        
-        nivel_previsto = nivel_anterior + delta_previsto
-        nivel_previsto = max(0, nivel_previsto) # Impede níveis negativos
-        previsoes.append({'data': data_previsao, 'nivel_m': nivel_previsto})
-        
+    # 4. PREVISÃO DIRETA (SEM LOOP AUTO-REGRESSIVO)
+    print("🔮 Gerando janelas de dados e prevendo todas as variações (deltas)...")
+    
+    # Prepara todas as janelas de input de uma vez
+    X_previsao = gerar_janelas_para_previsao(df_features_processadas, NUM_LAGS_MODELO)
+    X_previsao_scaled = scaler_entradas.transform(X_previsao.reshape(-1, X_previsao.shape[2])).reshape(X_previsao.shape)
+    
+    # O modelo prevê todos os deltas de uma vez
+    deltas_scaled = model.predict(X_previsao_scaled)
+    deltas_previstos = scaler_saida.inverse_transform(deltas_scaled).flatten()
+    
+    # 5. CÁLCULO DA CURVA FINAL DO NÍVEL DO RIO
+    niveis_previstos = []
+    nivel_anterior = nivel_atual
+    NIVEL_MINIMO_ESTIAGEM = 0.6
+    
+    for delta in deltas_previstos:
+        nivel_previsto = nivel_anterior + delta
+        nivel_previsto = max(NIVEL_MINIMO_ESTIAGEM, nivel_previsto)
+        niveis_previstos.append(nivel_previsto)
         nivel_anterior = nivel_previsto
 
-    df_previsao_final = pd.DataFrame(previsoes)
+    # 6. GERAÇÃO DE GRÁFICOS E RESULTADOS
+    hoje = pd.to_datetime('today').normalize()
+    datas_previsao = pd.date_range(start=hoje, periods=len(niveis_previstos))
+    df_previsao_final = pd.DataFrame({'data': datas_previsao, 'nivel_m': niveis_previstos})
 
-    # 5. GERAÇÃO DE GRÁFICOS E RESULTADOS
     gerar_grafico_previsao(
         df_previsao=df_previsao_final,
         ponto_de_corte=NUM_DIAS_PREVISAO_CHUVA,
@@ -101,7 +104,6 @@ def run_prediction_scenarios():
     
     df_previsao_texto.to_csv("results/previsao_nivel_rio_com_estimativa.csv", index=False)
     print("\n✅ Previsões salvas em results/previsao_nivel_rio_com_estimativa.csv")
-
 
 if __name__ == "__main__":
     run_prediction_scenarios()
