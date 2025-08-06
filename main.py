@@ -1,4 +1,4 @@
-# main.py (VERSÃO FINAL, SIMPLES E ROBUSTA)
+# main.py (VERSÃO FINAL E CORRETA)
 
 import pandas as pd
 import numpy as np
@@ -11,10 +11,13 @@ from src.data_collection import coletar_dados_chuva, coletar_nivel_atual_rio
 from src.visualization import gerar_grafico_previsao
 from src.preprocess_dataframe import preprocess_dataframe
 
-# --- CONFIGURAÇÕES GERAIS ---
-NUM_LAGS_MODELO = 7
+# --- CONFIGURAÇÕES GERAIS (ALINHADAS COM O TREINO) ---
+# É crucial que estes valores sejam os mesmos do seu script de treino
+NUM_LAGS_MODELO = 6
 DIAS_ROLLING_MAX = 7 
-NUM_DIAS_HISTORICO = NUM_LAGS_MODELO + DIAS_ROLLING_MAX + 5
+
+# O histórico de dias a buscar é a soma exata do que o modelo e as features precisam.
+NUM_DIAS_HISTORICO = NUM_LAGS_MODELO + DIAS_ROLLING_MAX 
 
 NUM_DIAS_PREVISAO_CHUVA = 14
 DIAS_ADICIONAIS_ESTIMATIVA = 10
@@ -31,7 +34,7 @@ def gerar_janelas_para_previsao(df_features, num_lags):
     return np.array(X)
 
 def run_prediction_scenarios():
-    print("--- INICIANDO ROTINA DE PREVISÃO (LÓGICA DIRETA) ---")
+    print("--- INICIANDO ROTINA DE PREVISÃO (LÓGICA DIRETA E CORRETA) ---")
     os.makedirs('results', exist_ok=True) 
 
     try:
@@ -57,11 +60,13 @@ def run_prediction_scenarios():
         df_chuva_cenario1 = pd.concat([df_chuva_cenario1, df_zeros])
 
     # 3. PROCESSAMENTO ÚNICO DE FEATURES
+    # Adicionamos uma coluna dummy de nível apenas para a função de preprocessamento rodar
     df_chuva_cenario1['altura_rio_guaiba_m'] = 0 
+    
     df_features_processadas = preprocess_dataframe(df_chuva_cenario1, coluna_nivel='altura_rio_guaiba_m')
     df_features_processadas = df_features_processadas[FEATURES_ENTRADA]
     
-    # 4. PREVISÃO DIRETA (SEM LOOP AUTO-REGRESSIVO)
+    # 4. PREVISÃO DIRETA
     print("🔮 Gerando janelas de dados e prevendo todas as variações (deltas)...")
     
     # Prepara todas as janelas de input de uma vez
