@@ -21,6 +21,7 @@ DATA_INICIO_PREVISAO = "2024-04-08"
 DATA_FIM_PREVISAO = "2024-05-06"
 NIVEL_INICIAL_REAL = 0.80
 NUM_LAGS = 6
+DIAS_ROLLING_MAX = 7
 COTA_INUNDACAO = 3.0
 
 CIDADES = {
@@ -98,7 +99,6 @@ def run_backtest():
     data_fim = pd.to_datetime(DATA_FIM_PREVISAO)
 
     # 1. Busca os dados de chuva para o período COMPLETO (histórico + previsão)
-    DIAS_ROLLING_MAX = 7
     data_inicio_hist = data_inicio - pd.Timedelta(days=NUM_LAGS + DIAS_ROLLING_MAX)
     
     df_chuva_total = fetch_rain_data(data_inicio_hist.strftime('%Y-%m-%d'), data_fim.strftime('%Y-%m-%d'))
