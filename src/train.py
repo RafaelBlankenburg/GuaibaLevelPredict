@@ -1,4 +1,4 @@
-# src/train.py (VERSÃO FINAL CORRIGIDA)
+# src/train.py (VERSÃO FINAL SIMPLIFICADA)
 
 import pandas as pd
 import numpy as np
@@ -9,15 +9,13 @@ from sklearn.preprocessing import MinMaxScaler
 import os
 import json
 
-# Importa a função de pré-processamento corrigida
 from preprocess_dataframe import preprocess_dataframe
 
 # --- CONSTANTES ---
-NUM_LAGS = 6
+NUM_LAGS = 7
 RANDOM_SEED = 42
 ARQUIVO_CSV = 'data/rain.csv'
 FATOR_PESO = 50.0
-
 
 def gerar_janelas(df, num_lags, cols_features, col_alvo):
     X, y = [], []
@@ -28,10 +26,8 @@ def gerar_janelas(df, num_lags, cols_features, col_alvo):
         y.append(valor_y)
     return np.array(X), np.array(y)
 
-
-
 def train_model():
-    print(f"⚙️  Iniciando treinamento com MinMaxScaler: LAGS={NUM_LAGS} (Estratégia DELTA)...")
+    print(f"⚙️  Iniciando treinamento SIMPLIFICADO: LAGS={NUM_LAGS}, FATOR_PESO={FATOR_PESO}...")
     np.random.seed(RANDOM_SEED)
     tf.random.set_seed(RANDOM_SEED)
 
@@ -43,25 +39,19 @@ def train_model():
 
     df_bruto[COLUNA_ALVO_DELTA] = df_bruto[COLUNA_NIVEL_ABSOLUTO].diff()
     
-    print("ℹ️  Gerando datas sintéticas para o arquivo de treino...")
     num_dias = len(df_bruto)
     data_inicio_sintetica = pd.to_datetime('2020-01-01')
     datas_sinteticas = pd.date_range(start=data_inicio_sintetica, periods=num_dias, freq='D')
     df_bruto['data'] = datas_sinteticas
 
-    print("⚙️  Aplicando pré-processamento...")
     df = preprocess_dataframe(df_bruto, coluna_nivel=COLUNA_NIVEL_ABSOLUTO)
-    print("✅ Features geradas.")
-
     FEATURES_ENTRADA = [col for col in df.columns if col not in [COLUNA_NIVEL_ABSOLUTO, COLUNA_ALVO_DELTA, 'data']]
 
-    # --- CORREÇÃO FUNDAMENTAL: Usar MinMaxScaler ---
     scaler_entradas = MinMaxScaler()
     scaler_delta = MinMaxScaler()
 
     entradas_para_scaler = df[FEATURES_ENTRADA]
     alvo_para_scaler = df[[COLUNA_ALVO_DELTA]]
-
     scaler_entradas.fit(entradas_para_scaler)
     scaler_delta.fit(alvo_para_scaler)
 
@@ -72,14 +62,13 @@ def train_model():
     X, y_scaled = gerar_janelas(df_scaled, NUM_LAGS, FEATURES_ENTRADA, COLUNA_ALVO_DELTA)
     _, y_original_delta = gerar_janelas(df, NUM_LAGS, FEATURES_ENTRADA, COLUNA_ALVO_DELTA)
     
-    pesos_totais = 1 + np.abs(y_original_delta) * FATOR_PESO
+    pesos_totais = 1 + np.power(np.abs(y_original_delta) * FATOR_PESO, 2)
 
     X_train, X_test, y_train, y_test, pesos_train, _ = train_test_split(
         X, y_scaled, pesos_totais, test_size=0.2, random_state=RANDOM_SEED, shuffle=False
     )
 
     num_features = len(FEATURES_ENTRADA)
-    
     model = tf.keras.models.Sequential([
         tf.keras.layers.LSTM(80, return_sequences=True, input_shape=(NUM_LAGS, num_features)),
         tf.keras.layers.Dropout(0.2),
@@ -87,30 +76,22 @@ def train_model():
         tf.keras.layers.Dropout(0.2),
         tf.keras.layers.Dense(1)
     ])
-    
     model.compile(optimizer='adam', loss='mse')
-    model.summary()
     
-    print(f"🧠 Treinando modelo DELTA com {len(X_train)} amostras e {num_features} features...")
+    print(f"🧠 Treinando modelo com {len(X_train)} amostras e {num_features} features...")
     model.fit(
-        X_train, y_train,
-        epochs=200,
-        batch_size=5,
-        validation_data=(X_test, y_test),
+        X_train, y_train, epochs=200, batch_size=5, validation_data=(X_test, y_test),
         callbacks=[tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True)],
-        verbose=1,
-        sample_weight=pesos_train
+        verbose=1, sample_weight=pesos_train
     )
 
-    print("💾 Salvando modelo e scalers (MinMaxScaler)...")
+    print("💾 Salvando modelo e scalers...")
     os.makedirs('models', exist_ok=True)
     model.save('models/lstm_model_delta.keras')
     joblib.dump(scaler_entradas, 'models/scaler_entradas.pkl')
     joblib.dump(scaler_delta, 'models/scaler_delta.pkl')
-
     with open('models/training_columns.json', 'w') as f:
         json.dump({'features_entrada': FEATURES_ENTRADA}, f)
-
     print("✅ Modelo DELTA salvo com sucesso!")
 
 if __name__ == '__main__':

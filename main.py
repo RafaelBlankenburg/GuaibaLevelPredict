@@ -1,4 +1,4 @@
-# main.py (VERSÃO FINAL - LÓGICA 100% CLONADA DO BACKTEST)
+# main.py (VERSÃO FINAL SIMPLIFICADA)
 
 import pandas as pd
 import numpy as np
@@ -11,21 +11,21 @@ from src.data_collection import coletar_dados_chuva, coletar_nivel_atual_rio
 from src.visualization import gerar_grafico_previsao
 from src.preprocess_dataframe import preprocess_dataframe
 
-# --- CONFIGURAÇÕES GERAIS (IDÊNTICAS AO BACKTEST E TREINO) ---
-NUM_LAGS_MODELO = 6
+# --- CONFIGURAÇÕES GERAIS ---
+NUM_LAGS_MODELO = 7
 DIAS_ROLLING_MAX = 7 
+NUM_DIAS_HISTORICO = NUM_LAGS_MODELO + DIAS_ROLLING_MAX
 
 NUM_DIAS_PREVISAO_CHUVA = 14
 DIAS_ADICIONAIS_ESTIMATIVA = 10
 DIAS_TOTAIS_PREVISAO = NUM_DIAS_PREVISAO_CHUVA + DIAS_ADICIONAIS_ESTIMATIVA
 COTA_INUNDACAO = 3.0
-NIVEL_MINIMO_ESTIAGEM = 0.6 # Nível mínimo para o rio
+NIVEL_MINIMO_ESTIAGEM = 0.6
 
 def run_prediction_scenarios():
-    print("--- INICIANDO ROTINA DE PREVISÃO (LÓGICA ALINHADA AO BACKTEST) ---")
+    print("--- INICIANDO ROTINA DE PREVISÃO (LÓGICA SIMPLIFICADA E CORRETA) ---")
     os.makedirs('results', exist_ok=True) 
 
-    print("\n--- Carregando modelo DELTA e scalers salvos ---")
     try:
         model = tf.keras.models.load_model('models/lstm_model_delta.keras')
         scaler_saida = joblib.load('models/scaler_delta.pkl')
@@ -37,12 +37,9 @@ def run_prediction_scenarios():
         print(f"❌ Erro ao carregar os arquivos do modelo: {e}")
         return
 
-    # 1. COLETA DE DADOS (LÓGICA IDÊNTICA AO BACKTEST)
-    NUM_DIAS_HISTORICO = NUM_LAGS_MODELO + DIAS_ROLLING_MAX
     df_chuva_total = coletar_dados_chuva(NUM_DIAS_HISTORICO, NUM_DIAS_PREVISAO_CHUVA)
     nivel_atual = coletar_nivel_atual_rio()
     
-    # 2. PREPARAÇÃO DO CENÁRIO
     print("\n--- Cenário 1: PREVISÃO COM ESTIAGEM (SEM CHUVA APÓS D14) ---")
     df_chuva_cenario1 = df_chuva_total.copy()
     if DIAS_ADICIONAIS_ESTIMATIVA > 0:
@@ -50,13 +47,10 @@ def run_prediction_scenarios():
         df_zeros = pd.DataFrame(0, index=datas_futuras, columns=[col for col in df_chuva_cenario1.columns if col.endswith('_mm')])
         df_chuva_cenario1 = pd.concat([df_chuva_cenario1, df_zeros])
 
-    # 3. PROCESSAMENTO ÚNICO DE FEATURES (LÓGICA IDÊNTICA AO BACKTEST)
     df_chuva_cenario1['altura_rio_guaiba_m'] = 0 
     df_features_processadas = preprocess_dataframe(df_chuva_cenario1, coluna_nivel='altura_rio_guaiba_m')
-    df_features_processadas['data'] = pd.to_datetime(df_features_processadas['data'])
     df_features_processadas.set_index('data', inplace=True)
 
-    # 4. LOOP DE PREVISÃO (LÓGICA IDÊNTICA AO BACKTEST)
     previsoes = []
     nivel_anterior = nivel_atual
     hoje = pd.to_datetime('today').normalize()
@@ -83,13 +77,7 @@ def run_prediction_scenarios():
 
     df_previsao_final = pd.DataFrame(previsoes)
 
-    # 5. GERAÇÃO DE GRÁFICOS E RESULTADOS
-    gerar_grafico_previsao(
-        df_previsao=df_previsao_final,
-        ponto_de_corte=NUM_DIAS_PREVISAO_CHUVA,
-        cota_inundacao=COTA_INUNDACAO,
-        caminho_saida='results/previsao_nivel_rio.png'
-    )
+    gerar_grafico_previsao(df_previsao=df_previsao_final, ponto_de_corte=NUM_DIAS_PREVISAO_CHUVA, cota_inundacao=COTA_INUNDACAO, caminho_saida='results/previsao_nivel_rio.png')
 
     df_previsao_texto = df_previsao_final.copy()
     df_previsao_texto['nivel_m'] = df_previsao_texto['nivel_m'].round(2)
@@ -100,7 +88,6 @@ def run_prediction_scenarios():
     
     df_previsao_texto.to_csv("results/previsao_nivel_rio_com_estimativa.csv", index=False)
     print("\n✅ Previsões salvas em results/previsao_nivel_rio_com_estimativa.csv")
-
 
 if __name__ == "__main__":
     run_prediction_scenarios()
