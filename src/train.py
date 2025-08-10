@@ -13,9 +13,9 @@ from preprocess_dataframe import preprocess_dataframe
 
 # --- CONSTANTES ---
 NUM_LAGS = 6
-RANDOM_SEED = 60
+RANDOM_SEED = 42
 ARQUIVO_CSV = 'data/rain.csv'
-FATOR_PESO = 25.0
+FATOR_PESO = 30.0
 
 def gerar_janelas(df, num_lags, cols_features, col_alvo):
     X, y = [], []
