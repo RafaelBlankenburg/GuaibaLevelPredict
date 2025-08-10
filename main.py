@@ -12,7 +12,7 @@ from src.visualization import gerar_grafico_previsao
 from src.preprocess_dataframe import preprocess_dataframe
 
 # --- CONFIGURAÇÕES GERAIS ---
-NUM_LAGS_MODELO = 7
+NUM_LAGS_MODELO = 6
 DIAS_ROLLING_MAX = 7 
 NUM_DIAS_HISTORICO = NUM_LAGS_MODELO + DIAS_ROLLING_MAX
 
