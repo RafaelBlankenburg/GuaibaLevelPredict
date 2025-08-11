@@ -15,7 +15,7 @@ from preprocess_dataframe import preprocess_dataframe
 NUM_LAGS = 6
 RANDOM_SEED = 42
 ARQUIVO_CSV = 'data/rain.csv'
-FATOR_PESO = 30.0
+FATOR_PESO = 35.0
 
 def gerar_janelas(df, num_lags, cols_features, col_alvo):
     X, y = [], []
@@ -70,9 +70,9 @@ def train_model():
 
     num_features = len(FEATURES_ENTRADA)
     model = tf.keras.models.Sequential([
-        tf.keras.layers.LSTM(80, return_sequences=True, input_shape=(NUM_LAGS, num_features)),
+        tf.keras.layers.LSTM(100, return_sequences=True, input_shape=(NUM_LAGS, num_features)),
         tf.keras.layers.Dropout(0.2),
-        tf.keras.layers.LSTM(40),
+        tf.keras.layers.LSTM(50),
         tf.keras.layers.Dropout(0.2),
         tf.keras.layers.Dense(1)
     ])
