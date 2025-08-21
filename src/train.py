@@ -1,4 +1,4 @@
-# src/train.py (VERSÃO FINAL COM TREINAMENTO BALANCEADO E ROBUSTO)
+# src/train.py (VERSÃO FINAL - TREINO BALANCEADO)
 
 import pandas as pd
 import numpy as np
@@ -11,11 +11,11 @@ import json
 
 from preprocess_dataframe import preprocess_dataframe
 
-# --- CONSTANTES DE TREINO BALANCEADAS ---
+# --- CONSTANTES ---
 NUM_LAGS = 6
 RANDOM_SEED = 42
 ARQUIVO_CSV = 'data/rain.csv'
-FATOR_PESO = 20.0 # Reduzido para um valor forte, mas mais estável
+FATOR_PESO = 30.0 # Um valor forte e balanceado
 
 def gerar_janelas(df, num_lags, cols_features, col_alvo):
     X, y = [], []
@@ -27,7 +27,7 @@ def gerar_janelas(df, num_lags, cols_features, col_alvo):
     return np.array(X), np.array(y)
 
 def train_model():
-    print(f"⚙️  Iniciando TREINAMENTO BALANCEADO com Aumento de Dados...")
+    print(f"⚙️  Iniciando TREINAMENTO BALANCEADO (Lags={NUM_LAGS}, Fator Peso={FATOR_PESO})...")
     np.random.seed(RANDOM_SEED)
     tf.random.set_seed(RANDOM_SEED)
 
@@ -61,14 +61,12 @@ def train_model():
     X, y_scaled = gerar_janelas(df_scaled, NUM_LAGS, FEATURES_ENTRADA, COLUNA_ALVO_DELTA)
     _, y_original_delta = gerar_janelas(df, NUM_LAGS, FEATURES_ENTRADA, COLUNA_ALVO_DELTA)
     
-    # --- PONDERACÃO LINEAR (MAIS ESTÁVEL) ---
-    pesos_totais = 1 + np.abs(y_original_delta) * FATOR_PESO
+    pesos_totais = 1 + np.power(np.abs(y_original_delta) * FATOR_PESO, 2)
 
     X_train, X_test, y_train, y_test, pesos_train, _ = train_test_split(
         X, y_scaled, pesos_totais, test_size=0.2, random_state=RANDOM_SEED, shuffle=False
     )
     
-    # --- AUMENTO DE DADOS (DATA AUGMENTATION) ---
     print("ℹ️  Aplicando aumento de dados com ruído para robustez...")
     noise_factor = 0.02
     X_train_augmented = X_train + np.random.normal(0, noise_factor, X_train.shape)
@@ -76,9 +74,9 @@ def train_model():
 
     num_features = len(FEATURES_ENTRADA)
     model = tf.keras.models.Sequential([
-        tf.keras.layers.LSTM(64, return_sequences=True, input_shape=(NUM_LAGS, num_features)),
+        tf.keras.layers.LSTM(80, return_sequences=True, input_shape=(NUM_LAGS, num_features)),
         tf.keras.layers.Dropout(0.2),
-        tf.keras.layers.LSTM(32),
+        tf.keras.layers.LSTM(40),
         tf.keras.layers.Dropout(0.2),
         tf.keras.layers.Dense(1)
     ])
@@ -86,13 +84,9 @@ def train_model():
     
     print(f"🧠 Treinando modelo com dados aumentados...")
     model.fit(
-        X_train_augmented, y_train,
-        epochs=200,
-        batch_size=16,
-        validation_data=(X_test, y_test),
+        X_train_augmented, y_train, epochs=200, batch_size=10, validation_data=(X_test, y_test),
         callbacks=[tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=25, restore_best_weights=True)],
-        verbose=1,
-        sample_weight=pesos_train
+        verbose=1, sample_weight=pesos_train
     )
 
     print("💾 Salvando modelo robusto e scalers...")
