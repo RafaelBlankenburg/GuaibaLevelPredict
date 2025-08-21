@@ -1,4 +1,4 @@
-# backtest.py (VERSÃO FINAL "HONESTA" COM AMORTECIMENTO E ACELERAÇÃO)
+# backtest.py (VERSÃO FINAL COMPLETA)
 
 import pandas as pd
 import numpy as np
@@ -19,7 +19,7 @@ from src.preprocess_dataframe import preprocess_dataframe
 ARQUIVO_NIVEIS_REAIS_CSV = 'data/niveis_reais_diarios.csv'
 DATA_INICIO_PREVISAO = "2024-04-08"
 DATA_FIM_PREVISAO = "2024-05-06"
-NIVEL_INICIAL_REAL = 0.83 # Nível real do dia 07/04/2024, usado para a partida "fria"
+NIVEL_INICIAL_REAL = 0.83 # Nível real do dia 07/04/2024
 
 # --- CONSTANTES ALINHADAS COM O TREINO ---
 NUM_LAGS = 6
@@ -133,14 +133,13 @@ def run_backtest():
         
         # LÓGICA DE AMORTECIMENTO E ACELERAÇÃO
         if dias_simulados <= 2:
-            delta_bruto *= 0.7 
+            delta_bruto *= 0.7 # Amortece o delta nos 2 primeiros dias
 
         historico_deltas.pop(0)
         historico_deltas.append(delta_bruto)
         delta_suavizado = np.mean(historico_deltas[-2:])
         
-        # Verifica se a feature 'bomba_chuva_taquari_3d' existe antes de usá-la
-        chuva_recente_taquari = janela_atual['bomba_chuva_taquari_3d'].iloc[-1] if 'bomba_chuva_taquari_3d' in janela_atual.columns else 0
+        chuva_recente_taquari = janela_atual['bomba_chuva_taquari_3d'].iloc[-1]
         if delta_suavizado > 0.02 and historico_deltas[-2] > 0.01 and chuva_recente_taquari > 30:
             acelerador = 1 + (delta_suavizado * 0.5) 
             delta_final = delta_suavizado * acelerador
