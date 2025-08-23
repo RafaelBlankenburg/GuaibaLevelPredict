@@ -50,10 +50,6 @@ def run_prediction_scenarios():
     df_historico_bruto = df_chuva_historica.copy()
     df_historico_bruto[COLUNA_NIVEL_ABSOLUTO] = nivel_atual
     
-    # Adiciona datas retroativas para o preprocessamento
-    df_historico_bruto.index.name = 'data'
-    df_historico_bruto.reset_index(inplace=True)
-
     df_historico_processado = preprocess_dataframe(df_historico_bruto, coluna_nivel=COLUNA_NIVEL_ABSOLUTO)
     janela_atual = df_historico_processado[FEATURES_ENTRADA].tail(NUM_LAGS_MODELO)
 
@@ -68,35 +64,28 @@ def run_prediction_scenarios():
     # 3. LOOP DE PREVISÃO DINÂMICA
     previsoes = []
     nivel_anterior = nivel_atual
-    historico_deltas = [0.0] * 3
-    dias_simulados = 0
-    df_simulacao_bruto = df_historico_bruto.set_index('data')
+    df_simulacao_bruto = df_historico_bruto.copy()
 
     print("🔮 Simulando previsão dia a dia...")
     for data_previsao in pd.date_range(start=hoje, periods=DIAS_TOTAIS_PREVISAO):
-        dias_simulados += 1
         X = janela_atual
         X_scaled = scaler_entradas.transform(X)
         X_input = np.expand_dims(X_scaled, axis=0)
 
         delta_scaled = model.predict(X_input, verbose=0)[0][0]
-        delta_bruto = scaler_saida.inverse_transform([[delta_scaled]])[0][0]
+        delta_previsto = scaler_saida.inverse_transform([[delta_scaled]])[0][0]
         
-        if dias_simulados <= 2:
-            delta_bruto *= 0.7
+        # LÓGICA DE ACELERAÇÃO BASEADA NO NÍVEL
+        if delta_previsto > 0:
+            if nivel_anterior > 2.5:
+                acelerador = 1.5
+            elif nivel_anterior > 1.5:
+                acelerador = 1.2
+            else:
+                acelerador = 1.0
+            delta_previsto *= acelerador
 
-        historico_deltas.pop(0)
-        historico_deltas.append(delta_bruto)
-        delta_suavizado = np.mean(historico_deltas[-2:])
-        
-        chuva_recente_taquari = janela_atual['bomba_chuva_taquari_3d'].iloc[-1]
-        if delta_suavizado > 0.02 and historico_deltas[-2] > 0.01 and chuva_recente_taquari > 30:
-            acelerador = 1 + (delta_suavizado * 0.5)
-            delta_final = delta_suavizado * acelerador
-        else:
-            delta_final = delta_suavizado
-
-        nivel_previsto = nivel_anterior + delta_final
+        nivel_previsto = nivel_anterior + delta_previsto
         nivel_previsto = max(NIVEL_MINIMO_ESTIAGEM, nivel_previsto)
         previsoes.append({'data': data_previsao, 'nivel_m': nivel_previsto})
         nivel_anterior = nivel_previsto
@@ -104,7 +93,6 @@ def run_prediction_scenarios():
         # ATUALIZAÇÃO PARA O PRÓXIMO CICLO
         chuva_do_dia = df_chuva_previsao.loc[[data_previsao]]
         chuva_do_dia[COLUNA_NIVEL_ABSOLUTO] = nivel_previsto
-        
         df_simulacao_bruto = pd.concat([df_simulacao_bruto, chuva_do_dia])
         df_temp_processado = preprocess_dataframe(df_simulacao_bruto.tail(DIAS_HISTORICO_NECESSARIO), coluna_nivel=COLUNA_NIVEL_ABSOLUTO)
         proxima_linha_features = df_temp_processado[FEATURES_ENTRADA].tail(1)

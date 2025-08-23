@@ -1,4 +1,4 @@
-# backtest.py (VERSÃO FINAL COMPLETA)
+# backtest.py (VERSÃO FINAL E ALINHADA)
 
 import pandas as pd
 import numpy as np
@@ -19,25 +19,14 @@ from src.preprocess_dataframe import preprocess_dataframe
 ARQUIVO_NIVEIS_REAIS_CSV = 'data/niveis_reais_diarios.csv'
 DATA_INICIO_PREVISAO = "2024-04-08"
 DATA_FIM_PREVISAO = "2024-05-06"
-NIVEL_INICIAL_REAL = 0.83 # Nível real do dia 07/04/2024
+NIVEL_INICIAL_REAL = 0.83
 
 # --- CONSTANTES ALINHADAS COM O TREINO ---
 NUM_LAGS = 6
 DIAS_ROLLING_MAX = 7
 COTA_INUNDACAO = 3.0
 
-CIDADES = {
-    "vacaria_mm": (-28.5108, -50.9389), "guapore_mm": (-28.8489, -51.8903),
-    "lagoa_vermelha_mm": (-28.2086, -51.5258), "passo_fundo_mm": (-28.2628, -52.4067),
-    "soledade_mm": (-28.8189, -52.5103), "cruz_alta_mm": (-28.6389, -53.6064),
-    "salto_do_jacui_mm": (-29.0950, -53.2144), "sao_francisco_de_paula_mm": (-29.4481, -50.5822),
-    "bento_goncalves_mm": (-29.1686, -51.5189), "caxias_do_sul_mm": (-29.1678, -51.1789),
-    "lajeado_mm": (-29.4669, -51.9614), "taquari_mm": (-29.7983, -51.8619),
-    "santa_cruz_do_sul_mm": (-29.7178, -52.4258), "julio_de_castilhos_mm": (-29.2269, -53.6817),
-    "santa_maria_mm": (-29.6842, -53.8069), "viamao_mm": (-30.0811, -51.0233),
-    "cachoeira_do_sul_mm": (-30.0392, -52.8939), "encruzilhada_do_sul_mm": (-30.5428, -52.5219),
-    "cacapava_do_sul_mm": (-30.5128, -53.4911), "sao_gabriel_mm": (-30.3358, -54.3200)
-}
+CIDADES = { "vacaria_mm": (-28.5108, -50.9389), "guapore_mm": (-28.8489, -51.8903), "lagoa_vermelha_mm": (-28.2086, -51.5258), "passo_fundo_mm": (-28.2628, -52.4067), "soledade_mm": (-28.8189, -52.5103), "cruz_alta_mm": (-28.6389, -53.6064), "salto_do_jacui_mm": (-29.0950, -53.2144), "sao_francisco_de_paula_mm": (-29.4481, -50.5822), "bento_goncalves_mm": (-29.1686, -51.5189), "caxias_do_sul_mm": (-29.1678, -51.1789), "lajeado_mm": (-29.4669, -51.9614), "taquari_mm": (-29.7983, -51.8619), "santa_cruz_do_sul_mm": (-29.7178, -52.4258), "julio_de_castilhos_mm": (-29.2269, -53.6817), "santa_maria_mm": (-29.6842, -53.8069), "viamao_mm": (-30.0811, -51.0233), "cachoeira_do_sul_mm": (-30.0392, -52.8939), "encruzilhada_do_sul_mm": (-30.5428, -52.5219), "cacapava_do_sul_mm": (-30.5128, -53.4911), "sao_gabriel_mm": (-30.3358, -54.3200) }
 
 def fetch_rain_data(start_date_str, end_date_str):
     print(f"⏳ Buscando dados de chuva de {start_date_str} a {end_date_str}...")
@@ -103,11 +92,9 @@ def run_backtest():
     
     df_chuva_historica = fetch_rain_data(data_inicio_historico.strftime('%Y-%m-%d'), data_fim_historico.strftime('%Y-%m-%d'))
     
-    # Assume que o nível no passado era constante no último valor conhecido
     df_historico_bruto = df_chuva_historica.copy()
     df_historico_bruto[COLUNA_NIVEL_ABSOLUTO] = NIVEL_INICIAL_REAL
 
-    # Processa este histórico "fabricado" para ter nossa janela inicial de features
     df_historico_processado = preprocess_dataframe(df_historico_bruto, coluna_nivel=COLUNA_NIVEL_ABSOLUTO)
     janela_atual = df_historico_processado[FEATURES_ENTRADA].tail(NUM_LAGS)
 
@@ -117,36 +104,28 @@ def run_backtest():
     # 3. INÍCIO DO LOOP DE PREVISÃO
     previsoes = []
     nivel_anterior = NIVEL_INICIAL_REAL
-    historico_deltas = [0.0] * 3
-    dias_simulados = 0
     df_simulacao_bruto = df_historico_bruto.copy()
 
     print("🔮 Simulando previsão dia a dia...")
     for data_previsao in pd.date_range(start=data_inicio_previsao, end=data_fim_previsao):
-        dias_simulados += 1
         X = janela_atual
         X_scaled = scaler_entradas.transform(X)
         X_input = np.expand_dims(X_scaled, axis=0)
         
         delta_scaled = model.predict(X_input, verbose=0)[0][0]
-        delta_bruto = scaler_saida.inverse_transform([[delta_scaled]])[0][0]
+        delta_previsto = scaler_saida.inverse_transform([[delta_scaled]])[0][0]
         
-        # LÓGICA DE AMORTECIMENTO E ACELERAÇÃO
-        if dias_simulados <= 2:
-            delta_bruto *= 0.7 # Amortece o delta nos 2 primeiros dias
-
-        historico_deltas.pop(0)
-        historico_deltas.append(delta_bruto)
-        delta_suavizado = np.mean(historico_deltas[-2:])
+        # LÓGICA DE ACELERAÇÃO BASEADA NO NÍVEL
+        if delta_previsto > 0:
+            if nivel_anterior > 2.5: # Acima da cota de alerta
+                acelerador = 1.5
+            elif nivel_anterior > 1.5: # Nível já elevado
+                acelerador = 1.2
+            else:
+                acelerador = 1.0 # Sem aceleração em níveis baixos
+            delta_previsto *= acelerador
         
-        chuva_recente_taquari = janela_atual['bomba_chuva_taquari_3d'].iloc[-1]
-        if delta_suavizado > 0.02 and historico_deltas[-2] > 0.01 and chuva_recente_taquari > 30:
-            acelerador = 1 + (delta_suavizado * 0.5) 
-            delta_final = delta_suavizado * acelerador
-        else:
-            delta_final = delta_suavizado
-        
-        nivel_previsto = nivel_anterior + delta_final
+        nivel_previsto = nivel_anterior + delta_previsto
         nivel_previsto = max(0, nivel_previsto)
         previsoes.append(nivel_previsto)
         nivel_anterior = nivel_previsto
