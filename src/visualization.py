@@ -1,42 +1,50 @@
-import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import pandas as pd
+import os
 
-def gerar_grafico_previsao(df_previsao, ponto_de_corte, cota_inundacao, caminho_saida):
-    print("📈 Gerando gráfico da previsão...")
-
-
-    df_previsao['data'] = pd.to_datetime(df_previsao['data'])
-    coluna_nivel = df_previsao.columns[1] 
-    df_real_forecast = df_previsao.iloc[:ponto_de_corte]
-    df_estimate = df_previsao.iloc[ponto_de_corte-1:]
-
-
-    plt.style.use('seaborn-v0_8-whitegrid') 
-    fig, ax = plt.subplots(figsize=(15, 8))
-
-    ax.plot(df_real_forecast['data'], df_real_forecast[coluna_nivel], 
-            'o-', label='Previsão (baseada na chuva prevista)', color='royalblue')
-
-    ax.plot(df_estimate['data'], df_estimate[coluna_nivel], 
-            'o--', label='Estimativa (cenário sem chuva futura)', color='darkorange')
-
-    ax.axhline(y=cota_inundacao, color='red', linestyle='--', 
-               label=f'Cota de Inundação ({cota_inundacao:.2f} m)')
-
-    ax.set_title('Previsão e Estimativa do Nível do Rio Guaíba', fontsize=16)
-    ax.set_xlabel('Data', fontsize=12)
-    ax.set_ylabel('Nível (metros)', fontsize=12)
-
-    ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m'))
-    plt.setp(ax.get_xticklabels(), rotation=45, ha='right') 
-
-    ax.legend()
-    fig.tight_layout() 
-
-
-    plt.savefig(caminho_saida, dpi=150)
-    plt.close(fig) 
+def plotar_previsao(df_previsao, nivel_atual, nome_arquivo='grafico_previsao.png'):
+    """
+    Gera um gráfico da previsão e salva na pasta data/processed.
+    """
+    # Configuração do tamanho da figura
+    plt.figure(figsize=(12, 6))
     
-    print(f"✅ Gráfico salvo em: {caminho_saida}")
+    # Prepara os dados
+    datas = df_previsao.index
+    niveis = df_previsao['nivel_estimado']
+    
+    # 1. Plotar a Previsão (Linha Azul)
+    plt.plot(datas, niveis, marker='o', linestyle='-', color='#007acc', linewidth=2, label='Previsao IA')
+    
+    # 2. Plotar o Ponto Atual (Ponto Verde)
+    data_inicial = datas[0] - pd.Timedelta(days=1)
+    plt.scatter([data_inicial], [nivel_atual], color='green', s=120, zorder=5, label=f'Nivel Atual ({nivel_atual}m)')
+    
+    # Linha tracejada conectando o atual à primeira previsão
+    plt.plot([data_inicial, datas[0]], [nivel_atual, niveis.iloc[0]], color='green', linestyle='--', alpha=0.6)
+
+    # 3. Linhas de Referência (Cotas do Guaíba)
+    plt.axhline(y=2.50, color='orange', linestyle='--', alpha=0.7, label='Alerta (2.5m)')
+    plt.axhline(y=3.00, color='red', linestyle='--', alpha=0.7, label='Inundacao (3.0m)')
+
+    # Formatação do Gráfico (Sem acentos ou emojis para evitar erros de fonte)
+    plt.title('Previsao do Nivel do Rio Guaiba', fontsize=16, fontweight='bold')
+    plt.xlabel('Data', fontsize=12)
+    plt.ylabel('Nivel (metros)', fontsize=12)
+    plt.grid(True, which='both', linestyle='--', alpha=0.5)
+    
+    # Formatação das Datas no Eixo X
+    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%d/%m'))
+    plt.gca().xaxis.set_major_locator(mdates.DayLocator(interval=1))
+    plt.xticks(rotation=45)
+    
+    plt.legend(loc='upper left')
+    plt.tight_layout()
+
+    # Salvar arquivo
+    caminho_saida = os.path.join('data', 'processed', nome_arquivo)
+    os.makedirs(os.path.dirname(caminho_saida), exist_ok=True)
+    
+    plt.savefig(caminho_saida, dpi=100)
+    print(f"📈 Grafico gerado com sucesso em: {caminho_saida}")
