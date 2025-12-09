@@ -10,12 +10,14 @@ from src.config import TARGET_COL
 class PrevisorNivelRio:
     def __init__(self, dias_atraso=7):
         self.dias_atraso = dias_atraso
+        # Ajuste Fino de Hiperparâmetros
         self.model = RandomForestRegressor(
-            n_estimators=1000, 
+            n_estimators=2000, 
             random_state=42, 
             n_jobs=-1,
-            min_samples_leaf=2,
-            max_depth=20 # Reduzi a profundidade para evitar overfitting em picos falsos
+            # Aumentamos leaf para 3: Isso suaviza a curva e reduz "micro-descidas" falsas
+            min_samples_leaf=3, 
+            max_depth=35
         )
         self.features_col_names = []
         self.is_trained = False
@@ -26,10 +28,7 @@ class PrevisorNivelRio:
         # 1. Features Globais
         chuva_media = df_input[cols_cidades].mean(axis=1)
         novas_colunas['chuva_media_estado'] = chuva_media
-        
-        # Saturação
-        saturacao_30d = chuva_media.rolling(window=30).sum().shift(1).fillna(0)
-        novas_colunas['saturacao_bacia_30d'] = saturacao_30d
+        novas_colunas['saturacao_bacia_30d'] = chuva_media.rolling(window=30).sum().shift(1).fillna(0)
         
         # 2. Features por Cidade
         for col in cols_cidades:
@@ -38,12 +37,19 @@ class PrevisorNivelRio:
             # Lags
             for i in range(1, self.dias_atraso + 1):
                 novas_colunas[f'{col}_lag_{i}'] = col_series.shift(i)
-            # Acumulados
-            novas_colunas[f'{col}_acum_07d'] = col_series.rolling(window=7).sum().shift(1)
-            novas_colunas[f'{col}_acum_14d'] = col_series.rolling(window=14).sum().shift(1)
             
-            # Feature de Interação
-            novas_colunas[f'{col}_x_sat'] = col_series * np.log1p(saturacao_30d)
+            # Acumulados (Foco em 3 e 7 dias)
+            ac3 = col_series.rolling(window=3).sum().shift(1)
+            ac7 = col_series.rolling(window=7).sum().shift(1)
+            ac14 = col_series.rolling(window=14).sum().shift(1)
+            
+            novas_colunas[f'{col}_acum_03d'] = ac3
+            novas_colunas[f'{col}_acum_07d'] = ac7
+            
+            # Feature de Gatilho (Chuva * Saturação)
+            # Essa é a feature que permite pegar o pico da enchente
+            saturacao = novas_colunas['saturacao_bacia_30d']
+            novas_colunas[f'{col}_gatilho_cheia'] = ac3 * (saturacao ** 2)
 
         return pd.DataFrame(novas_colunas, index=df_input.index)
 
@@ -53,6 +59,7 @@ class PrevisorNivelRio:
         
         df['nivel_anterior'] = df_historico[TARGET_COL].shift(1)
         df['target_delta'] = df_historico[TARGET_COL].diff()
+        
         df.dropna(inplace=True)
         
         self.features_col_names = [c for c in df.columns if c not in ['target_delta']]
@@ -62,28 +69,33 @@ class PrevisorNivelRio:
         return X, y
 
     def treinar(self, df_historico):
-        print("🧠 Iniciando treinamento (Calibragem Suave)...")
+        print("🧠 Iniciando treinamento (Foco: Picos + Estabilidade)...")
         X, y = self.preparar_dataset(df_historico)
         
-        # --- CALIBRAGEM 1: Menos Clonagem ---
-        # Antes: 20x | Agora: 5x
-        # O modelo precisa ver enchentes, mas não pode achar que todo dia é enchente
-        mask_subida = y > 0.05
-        X_subidas = X[mask_subida]
-        y_subidas = y[mask_subida]
+        # --- ESTRATÉGIA DE PESOS DUPLA ---
+        weights = np.ones(len(y))
         
-        if len(X_subidas) > 0:
-            X_final = pd.concat([X] + [X_subidas] * 5)
-            y_final = pd.concat([y] + [y_subidas] * 5)
-        else:
-            X_final, y_final = X, y
+        # 1. PESO DE EXPLOSÃO (Para garantir a subida no final)
+        mask_subida = y > 0.02
+        if mask_subida.any():
+            # Aumenta exponencialmente com a altura da subida
+            weights[mask_subida] = 1 + (y[mask_subida] * 60) ** 2
         
-        # --- CALIBRAGEM 2: Pesos Menores ---
-        # Antes: 10.0 | Agora: 3.0
-        weights = np.ones(len(y_final))
-        weights[y_final.values > 0] = 3.0 
+        # 2. PESO DE ESTABILIDADE (A CORREÇÃO PARA O SEU PROBLEMA)
+        # Identifica dias onde o rio ficou praticamente parado (-1cm a +1cm)
+        mask_estavel = (y > -0.015) & (y < 0.015)
         
-        self.model.fit(X_final, y_final, sample_weight=weights)
+        # Damos um peso muito alto (40x) para esses dias.
+        # Isso ensina a IA: "Se não tem motivo claro pra mexer, FIQUE PARADO em vez de descer".
+        weights[mask_estavel] = 40.0 
+        
+        # Clip para segurança numérica
+        weights = np.clip(weights, 1, 5000)
+
+        print(f"   Peso Máximo (Pico): {weights.max():.2f}")
+        print(f"   Peso Estabilidade: 40.0")
+        
+        self.model.fit(X, y, sample_weight=weights)
         self.is_trained = True
         self.features_col_names = list(X.columns)
         
@@ -109,7 +121,7 @@ class PrevisorNivelRio:
     def prever_simulacao(self, df_chuva_futura, nivel_inicial):
         if not self.is_trained: raise Exception("Modelo não treinado!")
         
-        print(f"🔄 Simulando (Modo: Estável)...")
+        print(f"🔄 Simulando (IA Híbrida Estabilizada)...")
         
         buffer_dias = 35 
         if len(df_chuva_futura) <= buffer_dias:
@@ -121,8 +133,7 @@ class PrevisorNivelRio:
         resultados = []
 
         df_features_all = self._gerar_features_df(df_simulacao, cols_cidades)
-
-        col_ref = [c for c in df_features_all.columns if 'acum_07d' in c]
+        col_ref_3d = [c for c in df_features_all.columns if 'acum_03d' in c]
 
         for i in range(len(df_simulacao)):
             idx = df_simulacao.index[i]
@@ -140,52 +151,36 @@ class PrevisorNivelRio:
                 X_input = X_input[self.features_col_names]
             except KeyError: break
 
-            # 1. IA Pura
+            # 1. Previsão da IA
             delta_ai = self.model.predict(X_input)[0]
             
-            # 2. CÁLCULO FÍSICO (CALIBRADO)
-            chuva_acum_bacia = 0
-            if col_ref:
-                vals = [features_dia[c] for c in col_ref if c in features_dia]
-                if vals: chuva_acum_bacia = sum(vals) / len(vals)
-            
+            # 2. Guarda-Corpo Físico Mínimo (Apenas para garantir a subida catastrófica)
             saturacao = features_dia.get('saturacao_bacia_30d', 0)
+            chuva_3d_bacia = 0
+            if col_ref_3d:
+                vals = [features_dia[c] for c in col_ref_3d if c in features_dia]
+                if vals: chuva_3d_bacia = sum(vals) / len(vals)
             
-            # --- CALIBRAGEM 3: Coeficientes mais mansos ---
-            coeficiente = 0.001 
-            if saturacao > 100: coeficiente = 0.002
-            if saturacao > 200: coeficiente = 0.004 
-            if saturacao > 300: coeficiente = 0.006 # Cortei pela metade (era 0.012)
+            # Regra de Segurança: Só interfere se a situação for EXTREMA
+            delta_fisico_minimo = -999
+            if saturacao > 200 and chuva_3d_bacia > 50:
+                delta_fisico_minimo = chuva_3d_bacia * 0.006 
 
-            delta_fisico = (chuva_acum_bacia * coeficiente) / 2.0 
+            # Decisão
+            delta_final = max(delta_ai, delta_fisico_minimo)
             
-            # --- DECISÃO HÍBRIDA ---
-            if chuva_acum_bacia > 20:
-                delta_final = max(delta_ai, delta_fisico)
-                
-                # Removemos o "Turbo 1.5x" aqui para evitar explosão.
-                # Apenas confiamos na física pura calibrada.
-            else:
-                delta_final = delta_ai
-                
-                # Freio de descida
-                nivel_atual = features_dia['nivel_anterior']
-                if delta_final < 0:
-                    if nivel_atual < 1.0: delta_final *= 0.05
-                    elif saturacao > 60: delta_final *= 0.2
+            # --- FILTRO DE ESTABILIDADE ---
+            # Se a IA previu uma descida leve (-0.02) mas o solo não está encharcado,
+            # nós zeramos a descida. Isso mantém a linha reta no início.
+            if saturacao < 150: 
+                if delta_final > -0.03 and delta_final < 0.01:
+                    delta_final = 0.0
 
-            # --- AMORTECIMENTO DE TOPO (EFEITO VÁRZEA) ---
-            # Se o rio já está muito alto (>4.5m), ele desacelera a subida
-            nivel_atual = features_dia['nivel_anterior']
-            if nivel_atual > 4.5 and delta_final > 0:
-                # Reduz a velocidade em 40%
-                delta_final *= 0.6
-
-            novo_nivel = nivel_atual + delta_final
+            novo_nivel = features_dia['nivel_anterior'] + delta_final
             
-            # Travas de segurança absolutas
+            # Limites
             if novo_nivel < 0.50: novo_nivel = 0.50
-            if novo_nivel > 6.50: novo_nivel = 6.50 # Impede o gráfico de 140m
+            if novo_nivel > 6.50: novo_nivel = 6.50
 
             df_simulacao.at[idx, 'nivel_predito'] = novo_nivel
             resultados.append({'data': idx, 'nivel_estimado': round(novo_nivel, 2)})
