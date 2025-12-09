@@ -38,7 +38,7 @@ def main():
         return
 
     # 4. Nível Atual
-    nivel_atual_hoje = 0.77 
+    nivel_atual_hoje = 0.65 
     print(f"📏 Nivel atual considerado: {nivel_atual_hoje}m")
 
     # 5. Executa a Previsão e Gera Gráfico
